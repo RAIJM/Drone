@@ -16,6 +16,7 @@
 
 #include "PID.h"
 #include "utils.h"
+#include "LatLng.h"
 
 
 
@@ -165,8 +166,10 @@ PID* pitchPID;
 
 int way_point_counter = 0;
 
-LatLng waypoints[1];
+LatLng waypoints[4];
 LatLng* current_location;
+
+int num_waypoints = 4;
 
 
 //static Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
@@ -215,8 +218,6 @@ static void populate_waypoints();
 static float get_sonar_height();
 static void get_naze_data();
 
-String inData;
-
 
 void
 setup(void)
@@ -255,22 +256,9 @@ loop(void)
      //delay(100);
     //Serial.println(Naze32Serial.available());
     //get_naze_data();
-    while (Serial.available() > 0)
-    {
-        char recieved = Serial.read();
-        inData += recieved; 
-
-        // Process message when new line character is recieved
-        if (recieved == '\n')
-        {
-            Serial3.print("Arduino Received: ");
-            Serial3.print(inData);
-
-            inData = ""; // Clear recieved buffer
-        }
-    }
     
-    /*if(!armed && aux2_chan>=1200) //if drone is not armed and aux2 is set to 2000
+    
+    if(!armed && aux2_chan>=1200) //if drone is not armed and aux2 is set to 2000
     {
         apply_aux2(1000);
         apply_aux1(1000);
@@ -284,13 +272,10 @@ loop(void)
           apply_yaw(yaw_chan);
           apply_roll(roll_chan);
           apply_pitch(pitch_chan);
-          //if(throttlePID != NULL)
-          //{
-          //   throttlePID->reset_pid();
-          //}
-          //Serial.print("Im here");
-          
-
+          if(throttlePID != NULL)
+          {
+             throttlePID->reset_pid();
+          }
           
         }else{
             apply_throttle(current_throttle);
@@ -299,12 +284,6 @@ loop(void)
             apply_roll(current_roll);
             stabilize_height();
             //flight_mission();
-            
-       
-            //Serial.print("Im here");
-            //Serial.print("Current Throttle:");
-            //Serial.println(current_throttle);
-           // auto_pilot();
 
         }
         
@@ -324,28 +303,6 @@ loop(void)
         manual = false;
       }
     
-      /*if(aux1_chan>=1490 && aux1_chan<=1520) //used for gtune
-      {
-        apply_aux1(aux1_chan);
-      }else{
-        apply_aux1(aux1_chan);
-      }*/
-
-    /*  Serial.print("Throttle ");
-      Serial.print(throttle_chan);
-      Serial.print("  Roll  ");
-      Serial.print(roll_chan);
-      Serial.print("  Yaw ");
-      Serial.print(yaw_chan);
-      Serial.print("  Pitch ");
-      Serial.print(pitch_chan);
-      Serial.print("  Aux1 ");
-      Serial.print(aux1_chan);
-      Serial.print(" Aux2 ");
-      Serial.println(aux2_chan);
-      Serial.println(manual);
-
-      //delay(500);*/
 
 }
 
@@ -364,7 +321,7 @@ flight_mission(void)
     float heading;
     LatLng current_dest = waypoints[way_point_counter];
     float bearing_x, distance_x;
-    calc_distance_and_bearing(current_dest.lat,current_location->lng,current_dest.lat,current_dest.lng,&distance_x,&bearing_x);
+    calc_distance_and_bearing(current_dest.get_lat(),current_location->get_lng(),current_dest.get_lat(),current_dest.get_lng(),&distance_x,&bearing_x);
     float roll_error;
     if(bearing_x >180)
     {
@@ -374,7 +331,7 @@ flight_mission(void)
     }
     
     float bearing_y, distance_y;
-    calc_distance_and_bearing(current_location->lat,current_dest.lng,current_dest.lat,current_dest.lng,&distance_y,&bearing_y);
+    calc_distance_and_bearing(current_location->get_lat(),current_dest.get_lng(),current_dest.get_lat(),current_dest.get_lng(),&distance_y,&bearing_y);
     float pitch_error;
     if(bearing_y > 90)
     {
@@ -394,30 +351,37 @@ flight_mission(void)
     current_yaw = desired_yaw;
 
     float actual_bearing, actual_distance;
-    calc_distance_and_bearing(current_location->lat,current_location->lng,current_dest.lat,current_dest.lng,&actual_distance,&actual_bearing);
+    calc_distance_and_bearing(current_location->get_lat(),current_location->get_lng(),current_dest.get_lat(),current_dest.get_lng(),&actual_distance,&actual_bearing);
     if(actual_distance < 0.5)
     {
         way_point_counter++;
-        /*if(way_point_counter == waypoints.length)
+        if(way_point_counter == num_waypoints)
         {
-            desired_height = 0.0
+            desired_height = 0.0;
             desired_pitch = 1500;
             desired_yaw = 1500;
             desired_roll = 1500;
-        }*/
+        }
     }
 
 }
 
 static void get_naze_data()
 {
-    int incomingByte = 0;
-    while(Serial.available() > 0) {
-        // read the incoming byte:
-        incomingByte = Serial.read();
-        // say what you got:
-        //Serial3.print("Hello");
-        Serial3.print(Serial.read());
+    String inData;
+    while (Serial.available() > 0)
+    {
+        char recieved = Serial.read();
+        inData += recieved; 
+
+        // Process message when new line character is recieved
+        if (recieved == '\n')
+        {
+            Serial3.print("Arduino Received: ");
+            Serial3.print(inData);
+
+            inData = ""; // Clear recieved buffer
+        }
     }
 }
 
