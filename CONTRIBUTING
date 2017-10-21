@@ -1,0 +1,15 @@
+Source code lines should not exceed 80 characters
+
+Use 4 (four) spaces for indentation (No tabs)
+
+Files should end with an empty newline
+
+Use UNIX style line endings (a single LF)
+
+Ensure that your code adheres to the existing style in the project sources.
+Refer to the GNU Coding Standards (https://www.gnu.org/prep/standards) for the
+recommended coding standards for this project.
+
+Commit messages should have a single-line synopsis followed by a verbose
+description after an empty line. It is desirable that the first line is no
+longer than 67 symbols.
