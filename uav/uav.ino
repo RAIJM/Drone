@@ -2,12 +2,14 @@
 #include <stdint.h>
 
 #include <Servo.h>
+
 #include "Ultrasonic.h"
 //#include <SoftwareSerial.h>
-
+#include <TinyGPS.h>
+#include "SharpIR.h"
 /* #include "DHT.h" */
-#include "Adafruit_FONA.h"
-#include "ArduinoJson.h"
+//#include "Adafruit_FONA.h"
+//#include "ArduinoJson.h"
 
 #include <stddef.h>
 
@@ -17,6 +19,8 @@
 #include "PID.h"
 #include "utils.h"
 #include "LatLng.h"
+
+#include "MSP.h"
 
 
 
@@ -35,6 +39,7 @@
 #define TRIG_PIN        25
 #define ECHO_PIN        23
 #define SONAR_PIN       0
+#define model 20150
 #define URL             "http://stonegod21.pythonanywhere.com/location/"
 
 static uint8_t type;
@@ -68,6 +73,8 @@ byte last_channel_6;
 #define LEFT_TURN 1460
 #define RIGHT_TURN 1540
 #define MAX_SAMPLES 30
+
+#define mySerial Serial1
 
 int states[] = {STATE_TAKEOFF,STATE_MOVEFORWARD,STATE_HOVER,STATE_LANDING,STATE_DONE }; //flight sequence
 
@@ -109,42 +116,45 @@ float dest_lat;
 float dest_lon;
 float drone_lat;
 float drone_lon;
-bool gpsFix;
+bool gpsFix = false;
 
-float throttle_kp = 5;
-float throttle_kd = 2.0;
-float throttle_ki = 5.0;
+float throttle_kp = 1.0;
+float throttle_kd = 1.0;
+float throttle_ki = 0;
 float throttle_bandwidth = 50;
 
-float yaw_kp;
-float yaw_kd;
-float yaw_ki;
-float yaw_bandwidth;
+float yaw_kp = 1.0;
+float yaw_kd = 0.0;
+float yaw_ki = 0.0;
+float yaw_bandwidth = 50;
 
-float roll_kp;
-float roll_kd;
-float roll_ki;
-float roll_bandwidth;
+float roll_kp = 2.61;
+float roll_kd = 3.41;
+float roll_ki = 0.57;
+float roll_bandwidth = 50;
 
-float pitch_kp;
-float pitch_kd;
-float pitch_ki;
-float pitch_bandwidth;
+float pitch_kp = 50;
+float pitch_kd = 0;
+float pitch_ki = 0;
+float pitch_bandwidth = 50;
 
 float g = 9.8;
 float vehicle_weight = 0.84;
 
 int u0 = 1000; // Zero throttle command
-int uh = 1500; // Hover throttle command
+int uh = 1700; // Hover throttle command
 float kt = vehicle_weight * g / (uh-u0);
 
-float desired_height = 2.0;
+float desired_height = 1;
 
 float time_of_last_throttle_pid_update=0;
 
 int max_samples_index = MAX_SAMPLES - 1;
 float test_values[MAX_SAMPLES];
 int test_votes[MAX_SAMPLES];
+
+//18.00399
+//-76.74828
 
 
 //static SoftwareSerial fonaSS = SoftwareSerial(FONA_TX, FONA_RX);
@@ -158,6 +168,8 @@ static Servo aux1Servo;
 static Servo aux2Servo;
 
 Ultrasonic ultrasonic(TRIG_PIN,ECHO_PIN); // (Trig PIN,Echo PIN)
+SharpIR SharpIR(A0, model);
+
 
 PID* throttlePID;
 PID* yawPID;
@@ -165,11 +177,25 @@ PID* rollPID;
 PID* pitchPID;
 
 int way_point_counter = 0;
+int num_waypoints = 1;
 
 LatLng waypoints[4];
 LatLng* current_location;
 
-int num_waypoints = 4;
+TinyGPS gps;
+
+MSP msp;
+msp_attitude_t drone_attitude;
+msp_altitude_t drone_altitude;
+msp_set_raw_rc_t drone_rcChannel;
+
+low_pass* filter_yaw;
+low_pass* filter_pitch;
+low_pass* filter_roll;
+
+bool mission_done = false;
+
+float time_to_fly;
 
 
 //static Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
@@ -205,6 +231,7 @@ static void land(int increment_time,int increment_amount);
 static void switch_state();
 static void check_height();
 static void getIMU(IMUValues*);
+static void getRCValues(RCValues* rcValues);
 static bool send_telemetry();
 static void getAttitude(Attitude* attitude);
 static float get_height(void);
@@ -217,21 +244,58 @@ static float sample_height(void);
 static void populate_waypoints();
 static float get_sonar_height();
 static void get_naze_data();
+static int get_ir_height();
+void gpsdump(TinyGPS &gps);
+float getFloat(double number, int digits);
+static bool update_attitude();
+static void set_up_filters();
+static bool update_altitude();
+static void update_gps_reading();
+static int convert_360_to_180(int lon);
+static void reset_pids();
+
+bool at_height = false;
+bool ready_to_fly = false;
+float time_to_print;
+
+
 
 
 void
 setup(void)
 {
-  //  setUpFona();
     
-    set_up_servos();
-    set_up_pids();
+    set_up_servos(); //used to set up pwm pins for naze32
+    set_up_pids(); //set up pid controllers for roll,pitch,throttle,yaw
+    set_up_filters(); //set up low pass filters for pitch,roll,yaw
+    populate_waypoints(); //set up waypoints
+    disarm(); //make sure the drone is disarmed
+    
+
     Serial.begin(9600);
-    Serial3.begin(38400);
-    //Naze32Serial.begin(9600);
+    
+    delay(1000);
+
+    //setting up gps
+    mySerial.begin(9600);
+    Serial.println("uBlox Neo 6M");
+    Serial.print("Testing TinyGPS library v. "); Serial.println(TinyGPS::library_version());
+    Serial.println("by Mikal Hart");
+    Serial.println();
+    Serial.print("Sizeof(gpsobject) = "); 
+    Serial.println(sizeof(TinyGPS));
+    Serial.println(); 
+    time_to_fly = millis();
+    
+    Serial3.begin(38400); //bluetooth serial
+    
+    Serial2.begin(115200); //serial for naze32
+    msp.begin(Serial2);
+
+
     pinMode(TRIG_PIN, OUTPUT);
     pinMode(ECHO_PIN, INPUT);
-    current_throttle = 1000;
+    
     // put your setup code here, to run once:
 
     //used to set up interrupt for remote reciever
@@ -244,66 +308,125 @@ setup(void)
     PCMSK0 |= (1 << PCINT5);                                                  //Set PCINT5 (digital input 11)to trigger an interrupt on state change.
 }
 
+
 void
 loop(void)
 {
-    //Serial.println(Naze32Serial.available());
-    //send_telemetry();
-    //Serial.print(max_samples_index);
-   // Serial.println(sample_height());
-    // stabilize_height();
-     //Serial.println(sample_height());
-     //delay(100);
-    //Serial.println(Naze32Serial.available());
-    //get_naze_data();
     
+   // stabilize_height();
+   
+    //Serial.println(drone_attitude.yaw);
     
-    if(!armed && aux2_chan>=1200) //if drone is not armed and aux2 is set to 2000
+    update_gps_reading();
+    if(!armed) //if drone is not armed
     {
-        apply_aux2(1000);
-        apply_aux1(1000);
-        apply_throttle(885); //throttle needs to be at this value for drone to be armed
-        arm(); //arm the drone
+        if(aux2_chan>=1200) //arm command
+        {
+            apply_aux2(1000);
+            apply_aux1(1000);
+            apply_throttle(885); //throttle needs to be at this value for drone to be armed
+            arm(); //arm the drone
+        }
+
     }else{
-        
+
         if(manual)  //if drone is in the manual
         {
-          apply_throttle(throttle_chan);
-          apply_yaw(yaw_chan);
-          apply_roll(roll_chan);
-          apply_pitch(pitch_chan);
-          if(throttlePID != NULL)
-          {
-             throttlePID->reset_pid();
-          }
-          
-        }else{
+            //set throttle,pitch,yaw,roll from reciever
+            apply_throttle(throttle_chan);
+            apply_yaw(yaw_chan);
+            apply_roll(roll_chan);
+            apply_pitch(pitch_chan);
+            //reset_pids(); //used to reset pid controllers
+        
+        }else{ //if drone is in automatic
             apply_throttle(current_throttle);
             apply_pitch(current_pitch);
             apply_yaw(current_yaw);
             apply_roll(current_roll);
-            stabilize_height();
-            //flight_mission();
+          
+            
+            if(gpsFix && !ready_to_fly){
+                ready_to_fly = true;
+                time_to_fly = millis();
+            }
 
+            if(ready_to_fly){
+                //used to maintain a certain height
+                stabilize_height();
+                if(millis() - time_to_fly > 3000) //after 3 seconds start mission
+                {
+                    Serial.println("Im ready");
+                    at_height = true;
+                }
+
+                if(at_height){
+
+                    
+                    if(!mission_done){
+                        Serial3.println("Im flying");
+                        flight_mission();
+                    }
+                }
+            }
         }
-        
-        
-      }
-    
-      if(armed && aux2_chan <= 1200)
-      {
+    }
+  
+    if(armed && aux2_chan <= 1200)
+    {
         disarm(); //disarm if aux2 is set to 1000
-      }
-    
-      
-      if(aux1_chan<=1200) //used to set to manual control
-      {
+   
+    }
+
+    if(aux1_chan<=1200) //used to set to manual control
+    {
         manual = true;
-      }else if(aux1_chan>=1700){ //used to set to automatic
+    }else if(aux1_chan>=1700){ //used to set to automatic
         manual = false;
-      }
+    }
+
+    
+//      Serial.print("Throttle ");
+//      Serial.print(throttle_chan);
+//      Serial.print("Roll ");
+//      Serial.print(roll_chan);
+//      Serial.print("Yaw ");
+//      Serial.print(yaw_chan);
+//      Serial.print("Pitch ");
+//      Serial.print(pitch_chan);
+//      Serial.print("Aux1 ");
+//      Serial.print(aux1_chan);
+//      Serial.print("Aux2 ");
+//      Serial.println(aux2_chan);
+//      delay(500);
     
 
+}
+
+
+
+
+
+static void
+set_up_filters()
+{
+    filter_yaw = new low_pass(20,0.01);
+    filter_roll = new low_pass(20,0.01);
+    filter_pitch = new low_pass(20,0.01);
+}
+
+static void 
+reset_pids()
+{
+    throttlePID->reset_pid();
+    rollPID->reset_pid();
+    yawPID->reset_pid();
+    pitchPID->reset_pid();
+}
+
+static int convert_360_to_180(int lon)
+{
+    return (lon > 180)? lon - 360: (lon < -180)? lon +360 : lon;
 }
 
 static void 
@@ -316,53 +439,195 @@ set_up_pids(void)
 }
 
 static void
+update_gps_reading()
+{
+    //Serial3.println("Hello");
+    bool newdata = false;
+    unsigned long start = millis();
+    while (mySerial.available()) 
+    {
+        char c = mySerial.read();
+        if (gps.encode(c)) //if we got a fix
+        {
+            newdata = true;
+            break;
+        }
+
+        if(millis() - start > 5)
+        {
+            Serial.print("Timeout");
+            break;
+        } 
+    }
+
+    if(newdata)
+    {
+        //Serial.print("Got Fix!!");
+        gpsFix = true;
+        gpsdump(gps); //update current location of drone
+       
+    }
+}
+
+void gpsdump(TinyGPS &gps)
+{
+    float flat, flon;
+    unsigned long age;
+    gps.f_get_position(&flat, &flon, &age);
+    Serial3.print("Lat/Long(float): "); flat = getFloat(flat, 5); Serial3.print(", "); flon = getFloat(flon, 5);
+    if(current_location == 0)
+    {
+        current_location = new LatLng(flat,flon);
+    }else{
+        current_location->set_lat(flat);
+        current_location->set_lng(flon);
+    }
+    
+}
+
+float getFloat(double number, int digits)
+{
+  int char_count = 0;
+  char str[13];
+  // Handle negative numbers
+  if (number < 0.0) 
+  {
+     Serial3.print('-');
+     number = -number;
+     char_count+=1;
+     str[0] = '-';
+  }
+
+  // Round correctly so that print(1.999, 2) prints as "2.00"
+  double rounding = 0.5;
+  for (uint8_t i=0; i<digits; ++i)
+    rounding /= 10.0;
+  
+  number += rounding;
+
+  // Extract the integer part of the number and print it
+  unsigned long int_part = (unsigned long)number;
+  double remainder = number - (double)int_part;
+
+  char snum[5];
+  // convert 123 to string [buf]
+  itoa(int_part, snum, 10);
+  int i = 0;
+  while(snum[i] != 0)
+  {
+    str[char_count] = snum[i];
+    i+=1;
+    char_count+=1;
+  }
+  Serial3.print(int_part);
+
+  // Print the decimal point, but only if there are digits beyond
+  if (digits > 0){
+    Serial3.print(".");
+    str[char_count] = '.';
+    char_count+=1;
+  } 
+
+  // Extract digits from the remainder one at a time
+  while (digits-- > 0) 
+  {
+    remainder *= 10.0;
+    int toPrint = int(remainder);
+    char snum[2];
+    itoa(toPrint, snum, 10);
+    Serial3.print(toPrint);
+    str[char_count] = snum[0];
+    char_count+=1;
+    remainder -= toPrint;
+  }
+  str[char_count] = 0;
+  float temp = atof(str);
+}
+
+
+
+static void
 flight_mission(void)
 {
-    float heading;
+    //update_attitude();
+    
+    
+    float heading = filter_yaw->update((float)convert_360_to_180(drone_attitude.yaw));
+    //float heading = 0.0;
+    
     LatLng current_dest = waypoints[way_point_counter];
+    
     float bearing_x, distance_x;
     calc_distance_and_bearing(current_dest.get_lat(),current_location->get_lng(),current_dest.get_lat(),current_dest.get_lng(),&distance_x,&bearing_x);
     float roll_error;
-    if(bearing_x >180)
+    if(bearing_x < 180)
     {
         roll_error = distance_x;
     }else{
         roll_error = -distance_x;
     }
     
+    
     float bearing_y, distance_y;
     calc_distance_and_bearing(current_location->get_lat(),current_dest.get_lng(),current_dest.get_lat(),current_dest.get_lng(),&distance_y,&bearing_y);
     float pitch_error;
-    if(bearing_y > 90)
+    if(bearing_y < 90)
     {
         pitch_error = distance_y;
     }else{
         pitch_error = -distance_y;
     }
+    
+
     float rollPIDVal = rollPID->updatePID(roll_error);
     float pitchPIDVal = pitchPID->updatePID(pitch_error);
     float yawPIDVal  = yawPID->updatePID(0.0 - heading);
-    float desired_roll = toPWM(radians_to_degrees(rollPIDVal * cos(heading) + pitchPIDVal * sin((double)heading) * (1/g)));
-    float desired_pitch = toPWM(radians_to_degrees(pitchPIDVal * cos(heading) - rollPIDVal * sin((double)heading) * (1/g)));
+    float desired_roll = toPWM(radians_to_degrees((rollPIDVal * cos(heading) + pitchPIDVal * sin(heading)) * (1/g)));
+    float desired_pitch = toPWM(radians_to_degrees((pitchPIDVal * cos(heading) - rollPIDVal * sin(heading)) * (1/g)));
     float desired_yaw = 1500 - (yawPIDVal * (500/3.14));
 
-    current_roll = desired_roll;
-    current_pitch = desired_pitch;
-    current_yaw = desired_yaw;
+    current_roll = constrain(desired_roll,1000,2000);
+    current_pitch = constrain(desired_pitch,1000,2000);
+    current_yaw = constrain(desired_yaw,1000,2000);
 
     float actual_bearing, actual_distance;
     calc_distance_and_bearing(current_location->get_lat(),current_location->get_lng(),current_dest.get_lat(),current_dest.get_lng(),&actual_distance,&actual_bearing);
-    if(actual_distance < 0.5)
+
+    Serial.print("Throttle: ");
+    Serial.print(current_throttle);
+    Serial.print(" Roll: ");
+    Serial.print(current_roll);
+    Serial.print(" Yaw: ");
+    Serial.print(current_yaw);
+    Serial.print("Pitch: ");
+    Serial.print(current_pitch);
+    Serial.print("Roll Error ");
+    Serial.print(roll_error);
+    Serial.print(" Pitch Error ");
+    Serial.print(pitch_error);
+    Serial.print(" Heading");
+    Serial.println(heading);
+     
+     
+     
+
+    if(actual_distance < 10) //if craft is within 10m radius of destination
     {
+        Serial3.println("Im here bitches");
         way_point_counter++;
-        if(way_point_counter == num_waypoints)
+        if(way_point_counter == num_waypoints) //land the craft
         {
-            desired_height = 0.0;
+            mission_done = true;
+            desired_height = 0.2;
+            uh = 1100;
+            u0 = 1400;
             desired_pitch = 1500;
             desired_yaw = 1500;
             desired_roll = 1500;
         }
     }
+
+    
 
 }
 
@@ -387,10 +652,8 @@ static void get_naze_data()
 
 static void populate_waypoints()
 {
-    waypoints[0] = LatLng(18.3422,12.43332);
-    waypoints[1] = LatLng(18.4332,-79.11212);
-    waypoints[2] = LatLng(18.6332,-79.51212);
-    waypoints[3] = LatLng(18.5332,-79.41212);
+    current_location = new LatLng(18.00446,-76.74820);
+    waypoints[0] = LatLng(18.00445, -76.74820);
 }
 
 static float 
@@ -405,6 +668,13 @@ get_height(void)
     duration = pulseIn(ECHO_PIN, HIGH);
     distance = (duration/2) / 29.1;
     return distance;
+}
+
+static int
+get_ir_height()
+{
+    int dis=SharpIR.distance();
+    return dis;
 }
 
 static float
@@ -496,13 +766,9 @@ get_highest_vote()
 static void
 stabilize_height(void)
 {
-    float distance = sample_height()/100;
 
-    if(distance > 6.4)
-    {
-        distance = 0.2;
-    }
-    
+   // update_attitude();
+    float distance = get_ir_height()/100.0; 
     float error = desired_height - distance;
     /*if(time_of_last_throttle_pid_update > 0)
     {
@@ -513,16 +779,22 @@ stabilize_height(void)
     time_of_last_throttle_pid_update = (millis()/1000.0);*/
     float throttlePIDVal = throttlePID->updatePID(error);
     float desired_throttle = ((throttlePIDVal + g) * vehicle_weight);
-    
+//                                      (cos(deg_to_rad(filter_pitch->update(drone_attitude.pitch))) 
+//                                     * cos(filter_roll->update(deg_to_rad(drone_attitude.roll))));
+   
     desired_throttle = (desired_throttle/ kt) + u0;
     
     current_throttle = (int)constrain(desired_throttle,1000,2000);
-    Serial.print("Throttle: ");
-    Serial.print(current_throttle);
-    Serial.print(" error");
-    Serial.print(error);
-    Serial.print(" PIDVal ");
-    Serial.println(throttlePIDVal);
+    
+    //if(millis() - time_to_print > 500)
+    //{
+        Serial.print("Throttle: ");
+        Serial.print(current_throttle);
+        Serial.print("distance ");
+        Serial.println(distance);
+    //    time_to_print = millis();
+   // }
+    
     
     
     
@@ -749,6 +1021,7 @@ setUpFona(void)
     
 }*/
 
+
 static float
 calc_distance_and_bearing(float lat1, float lon1, float lat2, float lon2,float* distance,float*bearing)
 {
@@ -767,11 +1040,26 @@ calc_distance_and_bearing(float lat1, float lon1, float lat2, float lon2,float* 
     float c = 2 * atan(sqrt(a) / sqrt(1 - a));
     
     *distance = R * c;
+//
+//    float y = sin(lon2 - lon1) * cos(lat2);
+//    float x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(lon2 - lon1);
+//    *bearing = rad_to_deg(atan(y / x));
 
-    float y = sin(lon2 - lon1) * cos(lat2);
-    float x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(lon2 - lon1);
-    *bearing = rad_to_deg(atan(y / x));
+    float a1 = lat1 * M_PI / 180;
+    float b = lon1 * M_PI / 180;
+    float c1 = lat2 * M_PI / 180;
+    float d = lon2 * M_PI / 180;
 
+    if (cos(c1) * sin(d - b) == 0){
+        if (c1 > a1)
+            *bearing =  0;
+        else
+            *bearing =  180;
+    }else{
+        float angle = atan((cos(c1) * sin(d - b)) / (sin(c1) * cos(a1) - sin(a1) * cos(c1) * cos(d - b)));
+        *bearing = (int)(angle * 180 / M_PI + 360) % 360;
+
+    }
 
 }
 
@@ -795,6 +1083,7 @@ static void
 apply_pitch(int value)
 {
     pitchServo.write(value);
+    
     // apply PWM for pitch
 }
 
@@ -823,12 +1112,14 @@ static void
 apply_aux1(int value)
 {
     aux1Servo.write(value);
+
 }
 
 static void
 apply_aux2(int value)
 {
     aux2Servo.write(value);
+
 }
 
 /*static void
@@ -848,25 +1139,6 @@ static void disarm(void)
   apply_aux2(1200);
   current_throttle = 1000;
   armed = false;
-}
-
-static void
-get_drone_location(float *lat, float *lon)
-{
-    float latitude, longitude, speed_kph, heading, altitude;
-   // gpsFix = fona.getGPS(&latitude, &longitude, &speed_kph, &heading, &altitude);
-    
-    *lat = latitude;
-    *lon = longitude;
-
-//    Serial.print("Fix ");
-//    Serial.println(gpsFix);
-//    Serial.println(latitude);
-//    Serial.println(longitude);
-//    Serial.println(heading);
-//    Serial.println(altitude);
-//    Serial.println(speed_kph);
-   
 }
 
 static void 
@@ -977,102 +1249,49 @@ get_destination(float *lat, float *lon)
 static bool
 send_telemetry()
 {
-    //IMUValues imuValues;
-    //getIMU(&imuValues);
-
-    //Serial.println(imuValues.accx);
-    //Serial.println(imuValues.accy);
-    //Serial.println(imuValues.accz);
-
-    Attitude attitude;
-    getAttitude(&attitude);
-    Serial.println(attitude.angx);
-    Serial.println(attitude.angy);
-
-    //Analog analog;
-    //getAnalog(&analog);
-
-    //RCValues rcValues;
-    //getRCValues(&rcValues);
-
-
-
-    /*StaticJsonBuffer<200> jsonBuffer;
-
-    JsonObject& root = jsonBuffer.createObject();
-
-    char lat_buffer[10];
-    snprintf(lat_buffer, sizeof lat_buffer, "%f",drone_lat); 
-
-    char lon_buffer[10];
-    snprintf(lon_buffer, sizeof lon_buffer, "%f", drone_lon);
-
-    char angx_buffer[10];
-    snprintf(angx_buffer, sizeof angx_buffer, "%d",(int)attitude.angx);
-
-    char angy_buffer[10];
-    snprintf(angy_buffer, sizeof angy_buffer, "%d",(int)attitude.angy);
-
-    char heading_buffer[10];
-    snprintf(heading_buffer, sizeof heading_buffer, "%d", (int)attitude.heading);
-
-    char accx_buffer[10];
-    snprintf(accx_buffer, sizeof accx_buffer, "%d", (int) imuValues.accx);
-
-    char accy_buffer[10];
-    snprintf(accy_buffer, sizeof accy_buffer, "%d", (int) imuValues.accy);
-
-    char accz_buffer[10];
-    snprintf(accz_buffer, sizeof accz_buffer, "%d", (int) imuValues.accz);
-
-    char gyrx_buffer[10];
-    snprintf(gyrx_buffer, sizeof gyrx_buffer, "%d", (int) imuValues.gyrx);
-
-    char gyry_buffer[10];
-    snprintf(gyry_buffer, sizeof gyry_buffer, "%d", (int) imuValues.gyry);
-
-    char gyrz_buffer[10];
-    snprintf(gyrz_buffer, sizeof gyrz_buffer, "%d", (int) imuValues.gyrz);
-
-    char magx_buffer[10];
-    snprintf(magx_buffer, sizeof magx_buffer, "%d", (int) imuValues.magx);
-
-    char magy_buffer[10];
-    snprintf(magy_buffer, sizeof magy_buffer, "%d", (int) imuValues.magy);
-
-    char magz_buffer[10];
-    snprintf(magz_buffer, sizeof magz_buffer, "%d", (int) imuValues.magz);
-
-    char estalt_buffer[10];
-    snprintf(estalt_buffer, sizeof estalt_buffer, "%d", (int) altitude.est_alt);
-
-    char vario_buffer[10];
-    snprintf(vario_buffer, sizeof estalt_buffer, "%d", (int) altitude.vario);
-
-
-    root["lat"] = lon_buffer;
-    root["lat"] = lat_buffer;
-    root["angx"] = angx_buffer;
-    root["angy"] = angy_buffer;
-    root["heading"] = heading_buffer;
-    root["accx"] = accx_buffer;
-    root["accy"] = accy_buffer;
-    root["accz"] = accz_buffer;
-    root["gyrx"] = gyrx_buffer;
-    root["gyry"] = gyry_buffer;
-    root["gyrz"] = gyrz_buffer;
-    root["magx"] = magx_buffer;
-    root["magy"] = magy_buffer;
-    root["magz"] = magz_buffer;
-    root["est_alt"] = estalt_buffer;
-    root["vario"] = vario_buffer;
-    root["rc_throttle"] = (int)rcValues.rc_values[0]
-    root["rc_pitch"] = (int)rcValues.rc_values[1]
-    root["rc_yaw"] = (int)rcValues.rc_values[2]
-    root["rc_roll"] = (int)rcValues.rc_values[3]
-    root["vbat"] = convert(&analog->vbat)*/
+//    if (msp.request(MSP_ATTITUDE, &drone_attitude, sizeof(drone_attitude))) {
+//          
+//        float roll = (float)att.roll/10.0;
+//        float pitch = (float)att.pitch/10.0;
+//        float yaw  = (float)att.yaw/10.0;
+//
+//        Serial.print("accx ");
+//        Serial.print(roll);
+//        Serial.print(" accy ");
+//        Serial.print(pitch);
+//        Serial.print(" heading ");
+//        Serial.println(yaw);
+//    }
 
 }
+
+static bool
+update_attitude()
+{
+      msp_attitude_t att;
+      if (msp.request(MSP_ATTITUDE, &att, sizeof(att))) {
+        
+        int16_t roll = att.roll;
+        int16_t pitch = att.pitch;
+        int16_t yaw = att.yaw;
+        drone_attitude = att;
+        //Serial3.println("Hello");
+      }
+   
+}
+
+static bool
+update_altitude()
+{
+    msp_altitude_t alt;
+    if (msp.request(MSP_ALTITUDE, &alt, sizeof(alt))) {
+        drone_altitude.estimatedActualPosition = alt.estimatedActualPosition;
+        return true;
+    }else{
+        return false;
+    }
+}
+
 
 static char * 
 convert (uint8_t *a)

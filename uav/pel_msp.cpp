@@ -156,13 +156,13 @@ pel_msp_attitude(uint8_t *buf,Attitude* attiude)
     attiude->angy = angy;
     attiude->heading = heading;
 
-    /*pel_log_debug("Attitude Recieved: ");
+    pel_log_debug("Attitude Recieved: ");
     pel_log_debug(angx);
     pel_log_debug(", ");
     pel_log_debug(angy);
     pel_log_debug(", ");
     pel_log_debug(heading);
-    pel_log_debug("\n");*/
+    pel_log_debug("\n");
 }
 
 void
@@ -198,7 +198,7 @@ pel_msp_raw_imu(uint8_t *buf,IMUValues* imuValues)
     imuValues->magy = magy;
     imuValues->magz = magz;
 
-   /* pel_log_debug("Raw GPS Recieved: ");
+    pel_log_debug("Raw GPS Recieved: ");
     pel_log_debug(accx);
     pel_log_debug(", ");
     pel_log_debug(accy);
@@ -216,7 +216,7 @@ pel_msp_raw_imu(uint8_t *buf,IMUValues* imuValues)
     pel_log_debug(magy);
     pel_log_debug(", ");
     pel_log_debug(magz);
-    pel_log_debug("\n");*/
+    pel_log_debug("\n");
 }
 
 void

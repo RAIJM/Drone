@@ -16,14 +16,24 @@ class LatLng{
 	  this->lng = lng;
 	}
 
-    get_lat()
+    float get_lat()
     {
       return this->lat;
     }
 
-    get_lng()
+    float get_lng()
     {
       return this->lng;
+    }
+
+    void set_lat(float lat)
+    {
+        this->lat = lat;
+    }
+
+    void set_lng(float lon)
+    {
+      this->lng = lon;  
     }
 
 	
