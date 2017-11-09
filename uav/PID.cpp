@@ -25,17 +25,17 @@ float PID::updatePID(float error)
 
 	float p_value = this->kp * this->error;
 
-	this->integral += this->error * this->ki;
-	this->integral = constrain(this->integral,-this->integral_max,this->integral_max);
+	this->integral = this->integral + this->error * this->dt;
+	//this->integral = constrain(this->integral,-this->integral_max,this->integral_max);
 
-	float i_value = this->integral * dt;
+	float i_value = this->integral * this->ki;
 		
 	this->filter = this->filter_past + this->dt * (this->filter_bandwith * (this->error - this->filter_past));
 	this->filter_past = this->filter;
 	float d_value = this->kd * ((this->filter - this->derivative) / this->dt);
 	this->derivative = this->filter;
 
-	return p_value +d_value + i_value; 
+	return p_value + d_value + i_value; 
 }
 
 void PID::set_ki(float ki)
@@ -66,7 +66,6 @@ float PID::get_dt()
 void PID::reset_pid()
 {
 	this->integral = 0;
-	this->filter_past =0;
-	this->filter = 0;
+	
 }
 

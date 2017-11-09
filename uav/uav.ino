@@ -120,7 +120,7 @@ bool gpsFix = false;
 
 float throttle_kp = 1.0;
 float throttle_kd = 1.0;
-float throttle_ki = 0;
+float throttle_ki = 1.0;
 float throttle_bandwidth = 50;
 
 float yaw_kp = 1.0;
@@ -128,14 +128,14 @@ float yaw_kd = 0.0;
 float yaw_ki = 0.0;
 float yaw_bandwidth = 50;
 
-float roll_kp = 2.61;
-float roll_kd = 3.41;
-float roll_ki = 0.57;
+float roll_kp = 50;
+float roll_kd = 0;
+float roll_ki = 30;
 float roll_bandwidth = 50;
 
 float pitch_kp = 50;
 float pitch_kd = 0;
-float pitch_ki = 0;
+float pitch_ki = 10;
 float pitch_bandwidth = 50;
 
 float g = 9.8;
@@ -145,7 +145,7 @@ int u0 = 1000; // Zero throttle command
 int uh = 1700; // Hover throttle command
 float kt = vehicle_weight * g / (uh-u0);
 
-float desired_height = 1;
+float desired_height = 1.0;
 
 float time_of_last_throttle_pid_update=0;
 
@@ -245,8 +245,8 @@ static void populate_waypoints();
 static float get_sonar_height();
 static void get_naze_data();
 static int get_ir_height();
-void gpsdump(TinyGPS &gps);
-float getFloat(double number, int digits);
+static void gpsdump(TinyGPS &gps);
+static float getFloat(double number, int digits);
 static bool update_attitude();
 static void set_up_filters();
 static bool update_altitude();
@@ -312,11 +312,6 @@ setup(void)
 void
 loop(void)
 {
-    
-   // stabilize_height();
-   
-    //Serial.println(drone_attitude.yaw);
-    
     update_gps_reading();
     if(!armed) //if drone is not armed
     {
@@ -329,6 +324,7 @@ loop(void)
         }
 
     }else{
+        
 
         if(manual)  //if drone is in the manual
         {
@@ -338,72 +334,67 @@ loop(void)
             apply_roll(roll_chan);
             apply_pitch(pitch_chan);
             //reset_pids(); //used to reset pid controllers
-        
+       
         }else{ //if drone is in automatic
+
             apply_throttle(current_throttle);
             apply_pitch(current_pitch);
             apply_yaw(current_yaw);
             apply_roll(current_roll);
-          
             
-            if(gpsFix && !ready_to_fly){
+            update_attitude(); //update sensor values from naze
+
+            if(gpsFix && !ready_to_fly) //when we have a gps fix
+            {
                 ready_to_fly = true;
                 time_to_fly = millis();
             }
 
-            if(ready_to_fly){
+            if(ready_to_fly)
+            {
                 //used to maintain a certain height
                 stabilize_height();
+                
                 if(millis() - time_to_fly > 3000) //after 3 seconds start mission
                 {
                     Serial.println("Im ready");
                     at_height = true;
                 }
 
-                if(at_height){
-
-                    
+                if(at_height)
+                {
                     if(!mission_done){
                         Serial3.println("Im flying");
-                        flight_mission();
+                        flight_mission(); //start navigation mission
                     }
                 }
             }
         }
     }
-  
+
     if(armed && aux2_chan <= 1200)
     {
         disarm(); //disarm if aux2 is set to 1000
-   
+  
     }
 
     if(aux1_chan<=1200) //used to set to manual control
     {
         manual = true;
-    }else if(aux1_chan>=1700){ //used to set to automatic
+    } else if(aux1_chan>=1700){ 
         manual = false;
     }
 
-    
-//      Serial.print("Throttle ");
-//      Serial.print(throttle_chan);
-//      Serial.print("Roll ");
-//      Serial.print(roll_chan);
-//      Serial.print("Yaw ");
-//      Serial.print(yaw_chan);
-//      Serial.print("Pitch ");
-//      Serial.print(pitch_chan);
-//      Serial.print("Aux1 ");
-//      Serial.print(aux1_chan);
-//      Serial.print("Aux2 ");
-//      Serial.println(aux2_chan);
-//      delay(500);
+    //char buffer[50];
+    //sprintf("Throttle %d Roll %d Yaw %d Pitch %d Aux1 %d Aux2 %d",
+    //                                throttle_chan,roll_chan,yaw_chan,pitch_chan,aux1_chan,aux2_chan);
+    //Serial.println(buffer);
+
+
+
     
 
 }
-
-
 
 
 
@@ -424,10 +415,13 @@ reset_pids()
     pitchPID->reset_pid();
 }
 
-static int convert_360_to_180(int lon)
+
+static int 
+convert_360_to_180(int lon)
 {
     return (lon > 180)? lon - 360: (lon < -180)? lon +360 : lon;
 }
+
 
 static void 
 set_up_pids(void)
@@ -441,7 +435,7 @@ set_up_pids(void)
 static void
 update_gps_reading()
 {
-    //Serial3.println("Hello");
+    
     bool newdata = false;
     unsigned long start = millis();
     while (mySerial.available()) 
@@ -453,7 +447,7 @@ update_gps_reading()
             break;
         }
 
-        if(millis() - start > 5)
+        if(millis() - start > 5) //timeout of 5 millis
         {
             Serial.print("Timeout");
             break;
@@ -462,20 +456,23 @@ update_gps_reading()
 
     if(newdata)
     {
-        //Serial.print("Got Fix!!");
+        
         gpsFix = true;
         gpsdump(gps); //update current location of drone
        
     }
 }
 
-void gpsdump(TinyGPS &gps)
+static void 
+gpsdump(TinyGPS &gps)
 {
     float flat, flon;
     unsigned long age;
     gps.f_get_position(&flat, &flon, &age);
     Serial3.print("Lat/Long(float): "); flat = getFloat(flat, 5); Serial3.print(", "); flon = getFloat(flon, 5);
-    if(current_location == 0)
+    
+    //update location
+    if(current_location == 0) //if null
     {
         current_location = new LatLng(flat,flon);
     }else{
@@ -485,7 +482,8 @@ void gpsdump(TinyGPS &gps)
     
 }
 
-float getFloat(double number, int digits)
+static float 
+getFloat(double number, int digits)
 {
   int char_count = 0;
   char str[13];
@@ -549,18 +547,19 @@ float getFloat(double number, int digits)
 static void
 flight_mission(void)
 {
-    //update_attitude();
     
-    
+
     float heading = filter_yaw->update((float)convert_360_to_180(drone_attitude.yaw));
-    //float heading = 0.0;
     
-    LatLng current_dest = waypoints[way_point_counter];
+    LatLng current_dest = waypoints[way_point_counter]; //get the current destination
     
-    float bearing_x, distance_x;
+    float bearing_x, distance_x; //horizontal distance
+    
     calc_distance_and_bearing(current_dest.get_lat(),current_location->get_lng(),current_dest.get_lat(),current_dest.get_lng(),&distance_x,&bearing_x);
-    float roll_error;
-    if(bearing_x < 180)
+    
+    float roll_error; //difference in longitude
+    
+    if(bearing_x < 180) //left or right
     {
         roll_error = distance_x;
     }else{
@@ -568,10 +567,13 @@ flight_mission(void)
     }
     
     
-    float bearing_y, distance_y;
+    float bearing_y, distance_y; //vertical distance
+    
     calc_distance_and_bearing(current_location->get_lat(),current_dest.get_lng(),current_dest.get_lat(),current_dest.get_lng(),&distance_y,&bearing_y);
-    float pitch_error;
-    if(bearing_y < 90)
+    
+    float pitch_error; //difference in latitude
+    
+    if(bearing_y < 90) //top or bottom
     {
         pitch_error = distance_y;
     }else{
@@ -579,37 +581,30 @@ flight_mission(void)
     }
     
 
-    float rollPIDVal = rollPID->updatePID(roll_error);
+    //update pid controllers with new error
+    float rollPIDVal = rollPID->updatePID(roll_error);  
     float pitchPIDVal = pitchPID->updatePID(pitch_error);
     float yawPIDVal  = yawPID->updatePID(0.0 - heading);
+    
+    //calculate pitch,roll and yaw
     float desired_roll = toPWM(radians_to_degrees((rollPIDVal * cos(heading) + pitchPIDVal * sin(heading)) * (1/g)));
     float desired_pitch = toPWM(radians_to_degrees((pitchPIDVal * cos(heading) - rollPIDVal * sin(heading)) * (1/g)));
     float desired_yaw = 1500 - (yawPIDVal * (500/3.14));
 
+    //set pitch, roll and yaw
     current_roll = constrain(desired_roll,1000,2000);
     current_pitch = constrain(desired_pitch,1000,2000);
     current_yaw = constrain(desired_yaw,1000,2000);
 
+
+    //calcuate distance to waypoint
     float actual_bearing, actual_distance;
     calc_distance_and_bearing(current_location->get_lat(),current_location->get_lng(),current_dest.get_lat(),current_dest.get_lng(),&actual_distance,&actual_bearing);
 
-    Serial.print("Throttle: ");
-    Serial.print(current_throttle);
-    Serial.print(" Roll: ");
-    Serial.print(current_roll);
-    Serial.print(" Yaw: ");
-    Serial.print(current_yaw);
-    Serial.print("Pitch: ");
-    Serial.print(current_pitch);
-    Serial.print("Roll Error ");
-    Serial.print(roll_error);
-    Serial.print(" Pitch Error ");
-    Serial.print(pitch_error);
-    Serial.print(" Heading");
-    Serial.println(heading);
-     
-     
-     
+    char buffer[100];
+    sprintf(buffer, "Throttle: %d Roll %d Yaw %d Pitch %d Roll Error %.2f Pitch Error %.2f Heading %.2f",
+                current_throttle,current_roll,current_pitch,roll_error,pitch_error,heading);
+    Serial.println(buffer);
 
     if(actual_distance < 10) //if craft is within 10m radius of destination
     {
@@ -625,9 +620,7 @@ flight_mission(void)
             desired_yaw = 1500;
             desired_roll = 1500;
         }
-    }
-
-    
+    }    
 
 }
 
@@ -652,7 +645,7 @@ static void get_naze_data()
 
 static void populate_waypoints()
 {
-    current_location = new LatLng(18.00446,-76.74820);
+    current_location = new LatLng(18.00445,-76.74830);
     waypoints[0] = LatLng(18.00445, -76.74820);
 }
 
@@ -767,31 +760,34 @@ static void
 stabilize_height(void)
 {
 
-   // update_attitude();
-    float distance = get_ir_height()/100.0; 
+  
+    float distance = get_ir_height()/100.0; //get distance in meters
     float error = desired_height - distance;
-    /*if(time_of_last_throttle_pid_update > 0)
-    {
-        throttlePID->set_dt((millis()/1000.0)-time_of_last_throttle_pid_update);
+    // if(time_of_last_throttle_pid_update > 0)
+    // {
+    //     throttlePID->set_dt((millis()/1000.0)-time_of_last_throttle_pid_update);
         
 
-    }
-    time_of_last_throttle_pid_update = (millis()/1000.0);*/
-    float throttlePIDVal = throttlePID->updatePID(error);
-    float desired_throttle = ((throttlePIDVal + g) * vehicle_weight);
-//                                      (cos(deg_to_rad(filter_pitch->update(drone_attitude.pitch))) 
-//                                     * cos(filter_roll->update(deg_to_rad(drone_attitude.roll))));
+    // }
+    // time_of_last_throttle_pid_update = (millis()/1000.0);
+    
+    float throttlePIDVal = throttlePID->updatePID(error); //update pid controller for throttle
+    
+    float desired_throttle = ((throttlePIDVal + g) * vehicle_weight)/
+                                      (cos(filter_pitch->update(deg_to_rad(drone_attitude.pitch/10.0))) 
+                                     * cos(filter_roll->update(deg_to_rad(drone_attitude.roll/10.0))));
    
     desired_throttle = (desired_throttle/ kt) + u0;
     
     current_throttle = (int)constrain(desired_throttle,1000,2000);
+
+    char buffer[50];
+    sprintf(buffer,"Throttle %d distance %.2f",current_throttle,distance);
     
+    Serial.println(buffer);
     //if(millis() - time_to_print > 500)
     //{
-        Serial.print("Throttle: ");
-        Serial.print(current_throttle);
-        Serial.print("distance ");
-        Serial.println(distance);
+    
     //    time_to_print = millis();
    // }
     
