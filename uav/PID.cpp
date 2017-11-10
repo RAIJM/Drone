@@ -26,7 +26,7 @@ float PID::updatePID(float error)
 	float p_value = this->kp * this->error;
 
 	this->integral = this->integral + this->error * this->dt;
-	//this->integral = constrain(this->integral,-this->integral_max,this->integral_max);
+	this->integral = constrain(this->integral,-this->integral_max,this->integral_max);
 
 	float i_value = this->integral * this->ki;
 		

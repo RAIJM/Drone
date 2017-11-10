@@ -74,6 +74,8 @@ byte last_channel_6;
 #define RIGHT_TURN 1540
 #define MAX_SAMPLES 30
 
+#define HEIGHT 200 //height above ground in cm
+
 #define mySerial Serial1
 
 int states[] = {STATE_TAKEOFF,STATE_MOVEFORWARD,STATE_HOVER,STATE_LANDING,STATE_DONE }; //flight sequence
@@ -93,7 +95,7 @@ int prev_time;
 bool armed = false;
 bool manual = false;
 
-int current_throttle=1400;
+int current_throttle=1000;
 int current_pitch=1500;
 int current_roll=1500;
 int current_yaw=1500;
@@ -120,7 +122,7 @@ bool gpsFix = false;
 
 float throttle_kp = 1.0;
 float throttle_kd = 1.0;
-float throttle_ki = 1.0;
+float throttle_ki = 0;
 float throttle_bandwidth = 50;
 
 float yaw_kp = 1.0;
@@ -192,6 +194,7 @@ msp_set_raw_rc_t drone_rcChannel;
 low_pass* filter_yaw;
 low_pass* filter_pitch;
 low_pass* filter_roll;
+low_pass * filter_alt;
 
 bool mission_done = false;
 
@@ -257,6 +260,9 @@ static void reset_pids();
 bool at_height = false;
 bool ready_to_fly = false;
 float time_to_print;
+bool record_height = false;
+
+
 
 
 
@@ -312,7 +318,7 @@ setup(void)
 void
 loop(void)
 {
-    update_gps_reading();
+    
     if(!armed) //if drone is not armed
     {
         if(aux2_chan>=1200) //arm command
@@ -324,7 +330,6 @@ loop(void)
         }
 
     }else{
-        
 
         if(manual)  //if drone is in the manual
         {
@@ -333,28 +338,39 @@ loop(void)
             apply_yaw(yaw_chan);
             apply_roll(roll_chan);
             apply_pitch(pitch_chan);
-            //reset_pids(); //used to reset pid controllers
-       
-        }else{ //if drone is in automatic
+            //reset_pids(); //used to reset pid controller 
 
+        }else{ //if drone is in automatic
+            
+            update_gps_reading(); //update gps location
+            
             apply_throttle(current_throttle);
             apply_pitch(current_pitch);
             apply_yaw(current_yaw);
             apply_roll(current_roll);
-            
-            update_attitude(); //update sensor values from naze
 
-            if(gpsFix && !ready_to_fly) //when we have a gps fix
+            //update sensor values from naze
+            update_attitude(); 
+            update_altitude();
+
+            if(gpsFix) //when we have a gps fix
             {
-                ready_to_fly = true;
-                time_to_fly = millis();
+                if(!ready_to_fly)
+                {
+                    if(drone_altitude.estimatedActualPosition != 0) //if drone has altitude
+                    {
+                        ready_to_fly = true;
+                        time_to_fly = millis();
+                        desired_height = drone_altitude.estimatedActualPosition + HEIGHT;
+                    }
+                }
             }
 
             if(ready_to_fly)
             {
                 //used to maintain a certain height
                 stabilize_height();
-                
+
                 if(millis() - time_to_fly > 3000) //after 3 seconds start mission
                 {
                     Serial.println("Im ready");
@@ -363,26 +379,27 @@ loop(void)
 
                 if(at_height)
                 {
-                    if(!mission_done){
+                    if(!mission_done)
+                    {
                         Serial3.println("Im flying");
                         flight_mission(); //start navigation mission
                     }
-                }
+               }
             }
         }
     }
 
+    
     if(armed && aux2_chan <= 1200)
     {
         disarm(); //disarm if aux2 is set to 1000
-  
     }
 
     if(aux1_chan<=1200) //used to set to manual control
     {
         manual = true;
     } else if(aux1_chan>=1700){ 
-        manual = false;
+       manual = false;
     }
 
     //char buffer[50];
@@ -404,6 +421,7 @@ set_up_filters()
     filter_yaw = new low_pass(20,0.01);
     filter_roll = new low_pass(20,0.01);
     filter_pitch = new low_pass(20,0.01);
+    filter_alt = new low_pass(20,0.01);
 }
 
 static void 
@@ -601,10 +619,23 @@ flight_mission(void)
     float actual_bearing, actual_distance;
     calc_distance_and_bearing(current_location->get_lat(),current_location->get_lng(),current_dest.get_lat(),current_dest.get_lng(),&actual_distance,&actual_bearing);
 
-    char buffer[100];
-    sprintf(buffer, "Throttle: %d Roll %d Yaw %d Pitch %d Roll Error %.2f Pitch Error %.2f Heading %.2f",
-                current_throttle,current_roll,current_pitch,roll_error,pitch_error,heading);
-    Serial.println(buffer);
+    //char buffer[100];
+    //sprintf(buffer, "Throttle: %d Roll %d Yaw %d Pitch %d Roll Error %d Pitch Error %d Heading %d",
+    //            current_throttle,current_roll,current_pitch,(int)roll_error,(int)pitch_error,(int)heading);
+    //Serial.println(buffer);
+
+    Serial.print("Throttle ");
+    Serial.print(current_throttle);
+    Serial.print("Roll ");
+    Serial.print(current_roll);
+    Serial.print("Pitch ");
+    Serial.print(current_pitch);
+    Serial.print("Roll Error ");
+    Serial.print(roll_error);
+    Serial.print("Pitch Error ");
+    Serial.print(pitch_error);
+    Serial.print("Heading ");
+    Serial.println(heading);
 
     if(actual_distance < 10) //if craft is within 10m radius of destination
     {
@@ -761,15 +792,15 @@ stabilize_height(void)
 {
 
   
-    float distance = get_ir_height()/100.0; //get distance in meters
-    float error = desired_height - distance;
-    // if(time_of_last_throttle_pid_update > 0)
-    // {
-    //     throttlePID->set_dt((millis()/1000.0)-time_of_last_throttle_pid_update);
-        
-
-    // }
-    // time_of_last_throttle_pid_update = (millis()/1000.0);
+    //float distance = get_ir_height()/100.0; //get distance in meters
+    float distance = filter_alt->update(drone_altitude.estimatedActualPosition/100.0);
+    float error = (desired_height/100.0) - distance;
+    
+    if(time_of_last_throttle_pid_update > 0)
+    {
+        throttlePID->set_dt((millis()/1000.0)-time_of_last_throttle_pid_update);
+    }
+    time_of_last_throttle_pid_update = (millis()/1000.0);
     
     float throttlePIDVal = throttlePID->updatePID(error); //update pid controller for throttle
     
@@ -781,10 +812,15 @@ stabilize_height(void)
     
     current_throttle = (int)constrain(desired_throttle,1000,2000);
 
-    char buffer[50];
-    sprintf(buffer,"Throttle %d distance %.2f",current_throttle,distance);
-    
-    Serial.println(buffer);
+    //char buff[100];
+    //sprintf(buff,"distance %f",distance);
+    Serial.print("Throttle ");
+    Serial.print(current_throttle);
+    Serial.print(" error ");
+    Serial.println(error);
+//    
+    //Serial.println(buff);
+    //free(buff);
     //if(millis() - time_to_print > 500)
     //{
     
@@ -1281,7 +1317,8 @@ update_altitude()
 {
     msp_altitude_t alt;
     if (msp.request(MSP_ALTITUDE, &alt, sizeof(alt))) {
-        drone_altitude.estimatedActualPosition = alt.estimatedActualPosition;
+        //drone_altitude.estimatedActualPosition = alt.estimatedActualPosition;
+        drone_altitude = alt;
         return true;
     }else{
         return false;
