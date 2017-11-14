@@ -1,26 +1,23 @@
 #include <math.h>
 #include <stdint.h>
-
 #include <Servo.h>
-
-#include "Ultrasonic.h"
-//#include <SoftwareSerial.h>
+#include <HMC5883L_Simple.h>
 #include <TinyGPS.h>
+#include <Wire.h>
+#include "Ultrasonic.h"
 #include "SharpIR.h"
 /* #include "DHT.h" */
 //#include "Adafruit_FONA.h"
 //#include "ArduinoJson.h"
-
 #include <stddef.h>
-
 #include "pel_log.h"
 #include "pel_msp.h"
-
 #include "PID.h"
 #include "utils.h"
 #include "LatLng.h"
-
 #include "MSP.h"
+
+
 
 
 
@@ -74,7 +71,7 @@ byte last_channel_6;
 #define RIGHT_TURN 1540
 #define MAX_SAMPLES 30
 
-#define HEIGHT 200 //height above ground in cm
+#define HEIGHT 100 //height above ground in cm
 
 #define mySerial Serial1
 
@@ -94,6 +91,10 @@ int prev_time;
 
 bool armed = false;
 bool manual = false;
+bool mission_done = false;
+bool gpsFix = false;
+bool at_height = false;
+bool ready_to_fly = false;
 
 int current_throttle=1000;
 int current_pitch=1500;
@@ -118,7 +119,7 @@ float dest_lat;
 float dest_lon;
 float drone_lat;
 float drone_lon;
-bool gpsFix = false;
+
 
 float throttle_kp = 1.0;
 float throttle_kd = 1.0;
@@ -137,7 +138,7 @@ float roll_bandwidth = 50;
 
 float pitch_kp = 50;
 float pitch_kd = 0;
-float pitch_ki = 10;
+float pitch_ki = 0;
 float pitch_bandwidth = 50;
 
 float g = 9.8;
@@ -146,7 +147,6 @@ float vehicle_weight = 0.84;
 int u0 = 1000; // Zero throttle command
 int uh = 1700; // Hover throttle command
 float kt = vehicle_weight * g / (uh-u0);
-
 float desired_height = 1.0;
 
 float time_of_last_throttle_pid_update=0;
@@ -154,9 +154,6 @@ float time_of_last_throttle_pid_update=0;
 int max_samples_index = MAX_SAMPLES - 1;
 float test_values[MAX_SAMPLES];
 int test_votes[MAX_SAMPLES];
-
-//18.00399
-//-76.74828
 
 
 //static SoftwareSerial fonaSS = SoftwareSerial(FONA_TX, FONA_RX);
@@ -196,9 +193,12 @@ low_pass* filter_pitch;
 low_pass* filter_roll;
 low_pass * filter_alt;
 
-bool mission_done = false;
+
 
 float time_to_fly;
+float time_to_print;
+
+HMC5883L_Simple Compass;
 
 
 //static Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
@@ -256,11 +256,9 @@ static bool update_altitude();
 static void update_gps_reading();
 static int convert_360_to_180(int lon);
 static void reset_pids();
+static int get_heading();
 
-bool at_height = false;
-bool ready_to_fly = false;
-float time_to_print;
-bool record_height = false;
+
 
 
 
@@ -270,7 +268,6 @@ bool record_height = false;
 void
 setup(void)
 {
-    
     set_up_servos(); //used to set up pwm pins for naze32
     set_up_pids(); //set up pid controllers for roll,pitch,throttle,yaw
     set_up_filters(); //set up low pass filters for pitch,roll,yaw
@@ -292,7 +289,14 @@ setup(void)
     Serial.println(sizeof(TinyGPS));
     Serial.println(); 
     time_to_fly = millis();
-    
+
+
+    //setting up magnometer for heading;
+    Compass.SetDeclination(-7, 34, 'W');
+    Compass.SetSamplingMode(COMPASS_SINGLE);
+    Compass.SetScale(COMPASS_SCALE_130);  
+    Compass.SetOrientation(COMPASS_HORIZONTAL_X_NORTH);
+     
     Serial3.begin(38400); //bluetooth serial
     
     Serial2.begin(115200); //serial for naze32
@@ -319,6 +323,7 @@ void
 loop(void)
 {
     
+
     if(!armed) //if drone is not armed
     {
         if(aux2_chan>=1200) //arm command
@@ -341,18 +346,17 @@ loop(void)
             //reset_pids(); //used to reset pid controller 
 
         }else{ //if drone is in automatic
-            
+           
             update_gps_reading(); //update gps location
-            
+            update_altitude();
+           
             apply_throttle(current_throttle);
             apply_pitch(current_pitch);
             apply_yaw(current_yaw);
             apply_roll(current_roll);
 
             //update sensor values from naze
-            update_attitude(); 
-            update_altitude();
-
+            //update_attitude()update_altitude();
             if(gpsFix) //when we have a gps fix
             {
                 if(!ready_to_fly)
@@ -384,12 +388,11 @@ loop(void)
                         Serial3.println("Im flying");
                         flight_mission(); //start navigation mission
                     }
-               }
+                }
             }
         }
     }
 
-    
     if(armed && aux2_chan <= 1200)
     {
         disarm(); //disarm if aux2 is set to 1000
@@ -398,8 +401,8 @@ loop(void)
     if(aux1_chan<=1200) //used to set to manual control
     {
         manual = true;
-    } else if(aux1_chan>=1700){ 
-       manual = false;
+    }else if(aux1_chan>=1700){ 
+        manual = false;
     }
 
     //char buffer[50];
@@ -407,9 +410,6 @@ loop(void)
     //                                throttle_chan,roll_chan,yaw_chan,pitch_chan,aux1_chan,aux2_chan);
     //Serial.println(buffer);
 
-
-
-    
 
 }
 
@@ -431,6 +431,21 @@ reset_pids()
     rollPID->reset_pid();
     yawPID->reset_pid();
     pitchPID->reset_pid();
+}
+
+static int 
+get_heading()
+{
+    int heading = (int)Compass.GetHeadingDegrees();
+    int angle;
+    if(heading < 90)
+    {
+      angle = 360 - (90 - heading);
+    }else{
+      angle = heading - 90;
+    }
+
+    return angle;
 }
 
 
@@ -487,7 +502,7 @@ gpsdump(TinyGPS &gps)
     float flat, flon;
     unsigned long age;
     gps.f_get_position(&flat, &flon, &age);
-    Serial3.print("Lat/Long(float): "); flat = getFloat(flat, 5); Serial3.print(", "); flon = getFloat(flon, 5);
+    Serial.print("Lat/Long(float): "); flat = getFloat(flat, 5); Serial.print(", "); flon = getFloat(flon, 5);
     
     //update location
     if(current_location == 0) //if null
@@ -503,61 +518,61 @@ gpsdump(TinyGPS &gps)
 static float 
 getFloat(double number, int digits)
 {
-  int char_count = 0;
-  char str[13];
-  // Handle negative numbers
-  if (number < 0.0) 
-  {
-     Serial3.print('-');
-     number = -number;
-     char_count+=1;
-     str[0] = '-';
-  }
+    int char_count = 0;
+    char str[13];
+    // Handle negative numbers
+    if (number < 0.0) 
+    {
+        Serial3.print('-');
+        number = -number;
+        char_count+=1;
+        str[0] = '-';
+    }
 
-  // Round correctly so that print(1.999, 2) prints as "2.00"
-  double rounding = 0.5;
-  for (uint8_t i=0; i<digits; ++i)
-    rounding /= 10.0;
+    // Round correctly so that print(1.999, 2) prints as "2.00"
+    double rounding = 0.5;
+    for (uint8_t i=0; i<digits; ++i)
+        rounding /= 10.0;
   
-  number += rounding;
+    number += rounding;
 
-  // Extract the integer part of the number and print it
-  unsigned long int_part = (unsigned long)number;
-  double remainder = number - (double)int_part;
+    // Extract the integer part of the number and print it
+    unsigned long int_part = (unsigned long)number;
+    double remainder = number - (double)int_part;
 
-  char snum[5];
-  // convert 123 to string [buf]
-  itoa(int_part, snum, 10);
-  int i = 0;
-  while(snum[i] != 0)
-  {
-    str[char_count] = snum[i];
-    i+=1;
-    char_count+=1;
-  }
-  Serial3.print(int_part);
+    char snum[5];
+    // convert 123 to string [buf]
+    itoa(int_part, snum, 10);
+    int i = 0;
+    while(snum[i] != 0)
+    {
+        str[char_count] = snum[i];
+        i+=1;
+        char_count+=1;
+    }
+    Serial3.print(int_part);
 
-  // Print the decimal point, but only if there are digits beyond
-  if (digits > 0){
-    Serial3.print(".");
-    str[char_count] = '.';
-    char_count+=1;
-  } 
+    // Print the decimal point, but only if there are digits beyond
+    if (digits > 0){
+        Serial3.print(".");
+        str[char_count] = '.';
+        char_count+=1;
+    }  
 
-  // Extract digits from the remainder one at a time
-  while (digits-- > 0) 
-  {
-    remainder *= 10.0;
-    int toPrint = int(remainder);
-    char snum[2];
-    itoa(toPrint, snum, 10);
-    Serial3.print(toPrint);
-    str[char_count] = snum[0];
-    char_count+=1;
-    remainder -= toPrint;
-  }
-  str[char_count] = 0;
-  float temp = atof(str);
+    // Extract digits from the remainder one at a time
+    while (digits-- > 0) 
+    {
+        remainder *= 10.0;
+        int toPrint = int(remainder);
+        char snum[2];
+        itoa(toPrint, snum, 10);
+        Serial3.print(toPrint);
+        str[char_count] = snum[0];
+        char_count+=1;
+        remainder -= toPrint;
+    }
+    str[char_count] = 0;
+    float temp = atof(str);
 }
 
 
@@ -567,7 +582,9 @@ flight_mission(void)
 {
     
 
-    float heading = filter_yaw->update((float)convert_360_to_180(drone_attitude.yaw));
+    //float heading = filter_yaw->update((float)convert_360_to_180(drone_attitude.yaw));
+    float heading = filter_yaw->update((float)convert_360_to_180(get_heading()));
+    //float heading = 0.0;
     
     LatLng current_dest = waypoints[way_point_counter]; //get the current destination
     
@@ -805,9 +822,9 @@ stabilize_height(void)
     float throttlePIDVal = throttlePID->updatePID(error); //update pid controller for throttle
     
     float desired_throttle = ((throttlePIDVal + g) * vehicle_weight)/
-                                      (cos(filter_pitch->update(deg_to_rad(drone_attitude.pitch/10.0))) 
-                                     * cos(filter_roll->update(deg_to_rad(drone_attitude.roll/10.0))));
-   
+                                     (cos(filter_pitch->update(deg_to_rad(drone_attitude.pitch/10.0))) 
+                                    * cos(filter_roll->update(deg_to_rad(drone_attitude.roll/10.0))));
+//   
     desired_throttle = (desired_throttle/ kt) + u0;
     
     current_throttle = (int)constrain(desired_throttle,1000,2000);
@@ -818,15 +835,6 @@ stabilize_height(void)
     Serial.print(current_throttle);
     Serial.print(" error ");
     Serial.println(error);
-//    
-    //Serial.println(buff);
-    //free(buff);
-    //if(millis() - time_to_print > 500)
-    //{
-    
-    //    time_to_print = millis();
-   // }
-    
     
     
     
