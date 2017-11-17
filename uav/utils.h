@@ -39,4 +39,10 @@ class low_pass
 		}
 };
 
+struct LatLng{
+    float lat;
+    float lng;
+
+};
+
 

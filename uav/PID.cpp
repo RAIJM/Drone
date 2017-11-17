@@ -23,19 +23,23 @@ float PID::updatePID(float error)
 {
 	this->error = error;
 
-	float p_value = this->kp * this->error;
+	float p_value = this->kp * this->error; //p term
 
-	this->integral = this->integral + this->error * this->dt;
+	this->integral += this->error * this->dt;
 	this->integral = constrain(this->integral,-this->integral_max,this->integral_max);
 
-	float i_value = this->integral * this->ki;
-		
+	float i_value = this->integral * this->ki; //i term
+
+	//low pass filter
 	this->filter = this->filter_past + this->dt * (this->filter_bandwith * (this->error - this->filter_past));
 	this->filter_past = this->filter;
-	float d_value = this->kd * ((this->filter - this->derivative) / this->dt);
+	float d_value = this->kd * ((this->filter - this->derivative) / this->dt); //d term
 	this->derivative = this->filter;
+	
+	
+	float output = p_value + d_value + i_value;
 
-	return p_value + d_value + i_value; 
+	return output; //
 }
 
 void PID::set_ki(float ki)

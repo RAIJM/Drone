@@ -14,7 +14,6 @@
 #include "pel_msp.h"
 #include "PID.h"
 #include "utils.h"
-#include "LatLng.h"
 #include "MSP.h"
 
 
@@ -71,7 +70,7 @@ byte last_channel_6;
 #define RIGHT_TURN 1540
 #define MAX_SAMPLES 30
 
-#define HEIGHT 100 //height above ground in cm
+#define HEIGHT 150 //height above ground in cm
 
 #define mySerial Serial1
 
@@ -95,6 +94,8 @@ bool mission_done = false;
 bool gpsFix = false;
 bool at_height = false;
 bool ready_to_fly = false;
+bool pos_hold = false;
+bool control_heading = false;
 
 int current_throttle=1000;
 int current_pitch=1500;
@@ -121,9 +122,9 @@ float drone_lat;
 float drone_lon;
 
 
-float throttle_kp = 1.0;
+float throttle_kp = 0.8;
 float throttle_kd = 1.0;
-float throttle_ki = 0;
+float throttle_ki = 0.2;
 float throttle_bandwidth = 50;
 
 float yaw_kp = 1.0;
@@ -179,7 +180,8 @@ int way_point_counter = 0;
 int num_waypoints = 1;
 
 LatLng waypoints[4];
-LatLng* current_location;
+LatLng current_location;
+LatLng startPos;
 
 TinyGPS gps;
 
@@ -187,6 +189,7 @@ MSP msp;
 msp_attitude_t drone_attitude;
 msp_altitude_t drone_altitude;
 msp_set_raw_rc_t drone_rcChannel;
+msp_raw_imu_t drone_imu;
 
 low_pass* filter_yaw;
 low_pass* filter_pitch;
@@ -199,6 +202,14 @@ float time_to_fly;
 float time_to_print;
 
 HMC5883L_Simple Compass;
+
+float update_timer = millis();
+float end_timer = millis();
+
+float dv = 0;
+float dx = 0;
+float last_accel = 0;
+
 
 
 //static Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
@@ -257,6 +268,7 @@ static void update_gps_reading();
 static int convert_360_to_180(int lon);
 static void reset_pids();
 static int get_heading();
+static bool update_imu();
 
 
 
@@ -292,10 +304,10 @@ setup(void)
 
 
     //setting up magnometer for heading;
-    Compass.SetDeclination(-7, 34, 'W');
-    Compass.SetSamplingMode(COMPASS_SINGLE);
-    Compass.SetScale(COMPASS_SCALE_130);  
-    Compass.SetOrientation(COMPASS_HORIZONTAL_X_NORTH);
+//    Compass.SetDeclination(-7, 34, 'W');
+//    Compass.SetSamplingMode(COMPASS_SINGLE);
+//    Compass.SetScale(COMPASS_SCALE_130);  
+//    Compass.SetOrientation(COMPASS_HORIZONTAL_X_NORTH);
      
     Serial3.begin(38400); //bluetooth serial
     
@@ -322,8 +334,26 @@ setup(void)
 void
 loop(void)
 {
+    //Serial.println(end_timer - update_timer);
+    //update_timer = millis();
+    
+    //flight_mission();
+    //stabilize_height();
+    //Serial.println(get_ir_height());
+    //Serial.println(drone_altitude.estimatedActualPosition);
+//    update_imu();
+//    dv = 0;
+//    dx = 0;
+//    for(int i=0;i<100;i++){
+//        float accel = filter_alt->update(drone_imu.acc[1]);
+//        dv += accel  *0.01;
+//        dx += dv * 0.01;
+//    }
+//    Serial.print("Distance ");
+//    Serial.println(dx);
     
 
+    
     if(!armed) //if drone is not armed
     {
         if(aux2_chan>=1200) //arm command
@@ -335,6 +365,7 @@ loop(void)
         }
 
     }else{
+        //Serial.print("Im here");
 
         if(manual)  //if drone is in the manual
         {
@@ -357,38 +388,43 @@ loop(void)
 
             //update sensor values from naze
             //update_attitude()update_altitude();
-            if(gpsFix) //when we have a gps fix
-            {
+            //if(gpsFix) //when we have a gps fix
+            //{
+                
                 if(!ready_to_fly)
                 {
                     if(drone_altitude.estimatedActualPosition != 0) //if drone has altitude
                     {
+                        //get home position
+                        startPos.lat = current_location.lat;
+                        startPos.lng = current_location.lng;
+                        
                         ready_to_fly = true;
                         time_to_fly = millis();
                         desired_height = drone_altitude.estimatedActualPosition + HEIGHT;
                     }
                 }
-            }
+            //}
 
             if(ready_to_fly)
             {
                 //used to maintain a certain height
                 stabilize_height();
 
-                if(millis() - time_to_fly > 3000) //after 3 seconds start mission
-                {
-                    Serial.println("Im ready");
-                    at_height = true;
-                }
-
-                if(at_height)
-                {
-                    if(!mission_done)
-                    {
-                        Serial3.println("Im flying");
-                        flight_mission(); //start navigation mission
-                    }
-                }
+//                if(millis() - time_to_fly > 3000) //after 3 seconds start mission
+//                {
+//                    //Serial.println("Im ready");
+//                    at_height = true;
+//                }
+//
+//                if(at_height)
+//                {
+//                    if(!mission_done)
+//                    {
+//                       //Serial3.println("Im flying");
+//                       flight_mission(); //start navigation mission
+//                    }
+//                }
             }
         }
     }
@@ -404,13 +440,26 @@ loop(void)
     }else if(aux1_chan>=1700){ 
         manual = false;
     }
+//
+//      Serial.print("Throttle ");
+//      Serial.print(throttle_chan);
+//      Serial.print("Pitch ");
+//      Serial.print(pitch_chan);
+//      Serial.print("Roll ");
+//      Serial.print(roll_chan);
+//      Serial.print("Yaw ");
+//      Serial.print(yaw_chan);
+//      Serial.print("Aux1 ");
+//      Serial.print(aux1_chan);
+//      Serial.print("Aux2 ");
+//      Serial.println(aux2_chan);
 
     //char buffer[50];
     //sprintf("Throttle %d Roll %d Yaw %d Pitch %d Aux1 %d Aux2 %d",
     //                                throttle_chan,roll_chan,yaw_chan,pitch_chan,aux1_chan,aux2_chan);
     //Serial.println(buffer);
-
-
+    //end_timer = millis();
+    
 }
 
 
@@ -482,7 +531,7 @@ update_gps_reading()
 
         if(millis() - start > 5) //timeout of 5 millis
         {
-            Serial.print("Timeout");
+           // Serial.print("Timeout");
             break;
         } 
     }
@@ -502,16 +551,14 @@ gpsdump(TinyGPS &gps)
     float flat, flon;
     unsigned long age;
     gps.f_get_position(&flat, &flon, &age);
-    Serial.print("Lat/Long(float): "); flat = getFloat(flat, 5); Serial.print(", "); flon = getFloat(flon, 5);
+    //Serial.print("Lat/Long(float): "); 
+    flat = getFloat(flat, 5); 
+    //Serial.print(", "); 
+    flon = getFloat(flon, 5);
     
     //update location
-    if(current_location == 0) //if null
-    {
-        current_location = new LatLng(flat,flon);
-    }else{
-        current_location->set_lat(flat);
-        current_location->set_lng(flon);
-    }
+    current_location.lat = flat;
+    current_location.lng = flon;
     
 }
 
@@ -523,7 +570,7 @@ getFloat(double number, int digits)
     // Handle negative numbers
     if (number < 0.0) 
     {
-        Serial3.print('-');
+       // Serial.print('-');
         number = -number;
         char_count+=1;
         str[0] = '-';
@@ -550,11 +597,11 @@ getFloat(double number, int digits)
         i+=1;
         char_count+=1;
     }
-    Serial3.print(int_part);
+    //Serial.print(int_part);
 
     // Print the decimal point, but only if there are digits beyond
     if (digits > 0){
-        Serial3.print(".");
+       // Serial3.print(".");
         str[char_count] = '.';
         char_count+=1;
     }  
@@ -566,7 +613,7 @@ getFloat(double number, int digits)
         int toPrint = int(remainder);
         char snum[2];
         itoa(toPrint, snum, 10);
-        Serial3.print(toPrint);
+       // Serial.print(toPrint);
         str[char_count] = snum[0];
         char_count+=1;
         remainder -= toPrint;
@@ -583,14 +630,18 @@ flight_mission(void)
     
 
     //float heading = filter_yaw->update((float)convert_360_to_180(drone_attitude.yaw));
-    float heading = filter_yaw->update((float)convert_360_to_180(get_heading()));
-    //float heading = 0.0;
+    //float heading = filter_yaw->update((float)convert_360_to_180(get_heading()));
+    float heading = 0.0;
+    LatLng current_dest;
     
-    LatLng current_dest = waypoints[way_point_counter]; //get the current destination
+    if(!pos_hold)
+        current_dest = waypoints[way_point_counter]; //get the current destination
+    else
+        current_dest = startPos;
     
     float bearing_x, distance_x; //horizontal distance
     
-    calc_distance_and_bearing(current_dest.get_lat(),current_location->get_lng(),current_dest.get_lat(),current_dest.get_lng(),&distance_x,&bearing_x);
+    calc_distance_and_bearing(current_dest.lat,current_location.lng,current_dest.lat,current_dest.lng,&distance_x,&bearing_x);
     
     float roll_error; //difference in longitude
     
@@ -604,7 +655,7 @@ flight_mission(void)
     
     float bearing_y, distance_y; //vertical distance
     
-    calc_distance_and_bearing(current_location->get_lat(),current_dest.get_lng(),current_dest.get_lat(),current_dest.get_lng(),&distance_y,&bearing_y);
+    calc_distance_and_bearing(current_location.lat,current_dest.lng,current_dest.lat,current_dest.lng,&distance_y,&bearing_y);
     
     float pitch_error; //difference in latitude
     
@@ -629,46 +680,48 @@ flight_mission(void)
     //set pitch, roll and yaw
     current_roll = constrain(desired_roll,1000,2000);
     current_pitch = constrain(desired_pitch,1000,2000);
-    current_yaw = constrain(desired_yaw,1000,2000);
+    
+    if(control_heading)
+        current_yaw = constrain(desired_yaw,1000,2000);
 
 
     //calcuate distance to waypoint
     float actual_bearing, actual_distance;
-    calc_distance_and_bearing(current_location->get_lat(),current_location->get_lng(),current_dest.get_lat(),current_dest.get_lng(),&actual_distance,&actual_bearing);
+    calc_distance_and_bearing(current_location.lat,current_location.lng,current_dest.lat,current_dest.lng,&actual_distance,&actual_bearing);
 
     //char buffer[100];
     //sprintf(buffer, "Throttle: %d Roll %d Yaw %d Pitch %d Roll Error %d Pitch Error %d Heading %d",
     //            current_throttle,current_roll,current_pitch,(int)roll_error,(int)pitch_error,(int)heading);
     //Serial.println(buffer);
 
-    Serial.print("Throttle ");
-    Serial.print(current_throttle);
-    Serial.print("Roll ");
-    Serial.print(current_roll);
-    Serial.print("Pitch ");
-    Serial.print(current_pitch);
-    Serial.print("Roll Error ");
-    Serial.print(roll_error);
-    Serial.print("Pitch Error ");
-    Serial.print(pitch_error);
-    Serial.print("Heading ");
-    Serial.println(heading);
+//    Serial.print("Throttle ");
+//    Serial.print(current_throttle);
+//    Serial.print("Roll ");
+//    Serial.print(current_roll);
+//    Serial.print("Pitch ");
+//    Serial.print(current_pitch);
+//    Serial.print("Roll Error ");
+//    Serial.print(roll_error);
+//    Serial.print("Pitch Error ");
+//    Serial.print(pitch_error);
+//    Serial.print("Heading ");
+//    Serial.println(heading);
 
-    if(actual_distance < 10) //if craft is within 10m radius of destination
-    {
-        Serial3.println("Im here bitches");
-        way_point_counter++;
-        if(way_point_counter == num_waypoints) //land the craft
-        {
-            mission_done = true;
-            desired_height = 0.2;
-            uh = 1100;
-            u0 = 1400;
-            desired_pitch = 1500;
-            desired_yaw = 1500;
-            desired_roll = 1500;
-        }
-    }    
+//    if(actual_distance < 10) //if craft is within 10m radius of destination
+//    {
+//        Serial3.println("Im here bitches");
+//        way_point_counter++;
+//        if(way_point_counter == num_waypoints) //land the craft
+//        {
+//            mission_done = true;
+//            desired_height = 0.2;
+//            uh = 1100;
+//            u0 = 1400;
+//            desired_pitch = 1500;
+//            desired_yaw = 1500;
+//            desired_roll = 1500;
+//        }
+//    }    
 
 }
 
@@ -693,8 +746,13 @@ static void get_naze_data()
 
 static void populate_waypoints()
 {
-    current_location = new LatLng(18.00445,-76.74830);
-    waypoints[0] = LatLng(18.00445, -76.74820);
+    current_location.lat = 18.00416;
+    current_location.lng = -76.74820;
+    
+    LatLng dest;
+    dest.lat = 18.00445;
+    dest.lng = -76.74820;
+    waypoints[0] = dest;
 }
 
 static float 
@@ -809,21 +867,16 @@ stabilize_height(void)
 {
 
   
-    //float distance = get_ir_height()/100.0; //get distance in meters
     float distance = filter_alt->update(drone_altitude.estimatedActualPosition/100.0);
-    float error = (desired_height/100.0) - distance;
+    float error = (desired_height/100.0 - distance);
     
-    if(time_of_last_throttle_pid_update > 0)
-    {
-        throttlePID->set_dt((millis()/1000.0)-time_of_last_throttle_pid_update);
-    }
     time_of_last_throttle_pid_update = (millis()/1000.0);
     
     float throttlePIDVal = throttlePID->updatePID(error); //update pid controller for throttle
     
-    float desired_throttle = ((throttlePIDVal + g) * vehicle_weight)/
-                                     (cos(filter_pitch->update(deg_to_rad(drone_attitude.pitch/10.0))) 
-                                    * cos(filter_roll->update(deg_to_rad(drone_attitude.roll/10.0))));
+    float desired_throttle = ((throttlePIDVal + g) * vehicle_weight);
+//                                     (cos(filter_pitch->update(deg_to_rad(drone_attitude.pitch/10.0))) 
+//                                    * cos(filter_roll->update(deg_to_rad(drone_attitude.roll/10.0))));
 //   
     desired_throttle = (desired_throttle/ kt) + u0;
     
@@ -831,10 +884,13 @@ stabilize_height(void)
 
     //char buff[100];
     //sprintf(buff,"distance %f",distance);
-    Serial.print("Throttle ");
-    Serial.print(current_throttle);
-    Serial.print(" error ");
-    Serial.println(error);
+//    Serial.print("Throttle ");
+//    Serial.print(current_throttle);
+//    Serial.print("Distance ");
+//    Serial.print(distance);
+//    Serial.print(" error ");
+//    Serial.println(error);
+    
     
     
     
@@ -1327,6 +1383,19 @@ update_altitude()
     if (msp.request(MSP_ALTITUDE, &alt, sizeof(alt))) {
         //drone_altitude.estimatedActualPosition = alt.estimatedActualPosition;
         drone_altitude = alt;
+        return true;
+    }else{
+        return false;
+    }
+}
+
+static bool
+update_imu()
+{
+    msp_raw_imu_t imu;
+    if (msp.request(MSP_RAW_IMU, &imu, sizeof(imu))) {
+        //drone_altitude.estimatedActualPosition = alt.estimatedActualPosition;
+        drone_imu = imu;
         return true;
     }else{
         return false;
