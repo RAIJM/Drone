@@ -20,32 +20,45 @@ float Matrix::get(int row, int col)
 	return this->matrix[this->n_cols*row + col];
 }
 
+static Matrix * Matrix::Identity(int n_rows,int n_cols)
+{
+	Matrix * ident = new Matrix(n_rows, n_cols);
+	int i,j;
+	for(i=0; i< n_rows; i++)
+		for(j=0; i < n_cols; j++)
+			if(i == j)
+				ident->put(i,j,1.0f);
+			else
+				ident->put(i,j,0.0f);
+	return ident;
+}
 
-Matrix* Matrix::add(Matrix m2)
+
+Matrix* Matrix::add(Matrix * m2)
 {
 	int i,j;
 	Matrix* m3 = new Matrix(this->n_rows,this->n_cols);
-	for(i=0; i <this->n_rows; i++)
+	for(i=0; i < this->n_rows; i++)
 		for(j=0; j < this->n_cols; j++)
-			m3->put(i,j,this->get(i,j) + m2.get(i,j));
+			m3->put(i,j,this->get(i,j) + m2->get(i,j));
 	return m3;
 
 }
 
-Matrix* Matrix::substract(Matrix m2)
+Matrix* Matrix::subtract(Matrix * m2)
 {
 	int i,j;
 	Matrix * m3 = new Matrix(this->n_rows,this->n_cols);
 	for(i=0;i<this->n_rows; i++)
 		for(j=0; j < this->n_cols; j++)
-			m3->put(i,j,this->get(i,j) - m2.get(i,j));
+			m3->put(i,j,this->get(i,j) - m2->get(i,j));
 	return m3;
 }
 
-Matrix* Matrix::multiply(Matrix m2)
+Matrix* Matrix::multiply(Matrix * m2)
 {
 	int i,j,k;
-	Matrix * m3 = new Matrix(this->n_rows,m2.n_cols)
+	Matrix * m3 = new Matrix(this->n_rows,m2.n_cols);
 	for (i=0; i < this->n_rows; i++)
 	{
 		for(j=0; j < this->n_cols; j++)
@@ -53,7 +66,7 @@ Matrix* Matrix::multiply(Matrix m2)
 			int sum = 0;
 			for(k=0; k < this->n_cols; k++)
 			{
-				sum += this->get(i,k) * m2.get(k,j)
+				sum += this->get(i,k) * m2->get(k,j);
 				
 			}
 			m3->put(i,j,sum);
@@ -92,15 +105,15 @@ void Matrix::inverse()
 
 		if(this->get(pivrow,k) == 0.0f)
 		{
-			return 0;	
+			
 		}
 
 		if(pivrow!=k)
 		{
-			for(j=0; j < n; j++)
+			for(j=0; j < this->n_rows; j++)
 			{
 				tmp = this->get(pivrow,j);
-				this->put(pivrow,j,temp);
+				this->put(pivrow,j,tmp);
 			}
 		}
 
@@ -119,20 +132,20 @@ void Matrix::inverse()
 			if(i !=k )
 			{
 				tmp = this->get(i,k);
-				this->get(i,k) = 0.0f;
-				for(j=0; j < n; j++)
+				this->put(i,k, 0.0f);
+				for(j=0; j < this->n_rows; j++)
 				{
-					this->put(i, j) = this->get(i, j) - this->get(k,j) * tmp;
+					this->put(i, j,this->get(i, j) - this->get(k,j) * tmp);
 				}
 			}
 		}
 	}
 
-	for(k = n -1; k >=0; k--)
+	for(k = this->n_rows -1; k >=0; k--)
 	{
 		if(pivrows[k] != k)
 		{
-			for(i=0; i < n; i++)
+			for(i=0; i < this->n_rows; i++)
 			{
 				tmp = this->get(i, k);
 				this->put(i,k,this->get(i,pivrows[k]));
@@ -142,10 +155,6 @@ void Matrix::inverse()
 	}
 
 	
-
-
-
-
 }
 
 
