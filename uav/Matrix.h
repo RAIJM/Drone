@@ -1,4 +1,6 @@
-#include <cstdlib>
+#include <iostream>
+using namespace std;
+#include <stdlib.h>
 
 class Matrix
 {
@@ -7,14 +9,16 @@ class Matrix
 		int n_cols;
 		float * matrix;
 	public:
-		Matrix(int n_rows,int n_cols);
-		Matrix* multiply(Matrix* m2);
-		Matrix* add(Matrix * m2);
-		Matrix* subtract(Matrix * m2);
-		Matrix* transpose();
-		void put(int row,int col,float val);
-		float get(int row, int col);
-		void inverse();
-		static void Identity();
+		void init(int n_rows, int n_cols);
+        ~Matrix();
+		Matrix Multiply(Matrix m2);
+		Matrix Add(Matrix m2);
+		Matrix Subtract(Matrix m2);
+		Matrix Transpose();
+		void Put(int row,int col,float val);
+		float Get(int row, int col);
+		void Inverse();
+		void printMatrix();
+		static Matrix Identity(int n_rows,int n_cols);
 
 };

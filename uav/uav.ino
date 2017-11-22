@@ -15,6 +15,7 @@
 #include "PID.h"
 #include "utils.h"
 #include "MSP.h"
+#include "KalmanFilter.h"
 
 
 
@@ -196,6 +197,9 @@ low_pass* filter_pitch;
 low_pass* filter_roll;
 low_pass * filter_alt;
 
+KalmanFilter * state_x_kalman_filter;
+KalmanFilter * state_y_kalman_filter;
+
 
 
 float time_to_fly;
@@ -209,6 +213,17 @@ float end_timer = millis();
 float dv = 0;
 float dx = 0;
 float last_accel = 0;
+
+float accx_stddev = 0.469574275;
+float accy_stddev = 0.294957624;
+
+float pos_stddev = 2.0;
+
+float last_pitch_error = 0.0;
+float last_roll_error = 0.0;
+
+float last_udpate = millis();
+
 
 
 
@@ -269,6 +284,7 @@ static int convert_360_to_180(int lon);
 static void reset_pids();
 static int get_heading();
 static bool update_imu();
+static void calculate_standard_deviation();
 
 
 
@@ -302,6 +318,8 @@ setup(void)
     Serial.println(); 
     time_to_fly = millis();
 
+   // m3 = new Matrix(2,2);
+
 
     //setting up magnometer for heading;
 //    Compass.SetDeclination(-7, 34, 'W');
@@ -334,112 +352,113 @@ setup(void)
 void
 loop(void)
 {
-    //Serial.println(end_timer - update_timer);
-    //update_timer = millis();
+    //Serial.println("hello");
+    flight_mission();
+//
+//    Serial.println("Hello");
     
-    //flight_mission();
-    //stabilize_height();
-    //Serial.println(get_ir_height());
-    //Serial.println(drone_altitude.estimatedActualPosition);
-//    update_imu();
-//    dv = 0;
-//    dx = 0;
-//    for(int i=0;i<100;i++){
+
+     //for(int i=0;i<100;i++){
+//          update_imu();
+//          Serial.println(drone_imu.acc[0]);
 //        float accel = filter_alt->update(drone_imu.acc[1]);
 //        dv += accel  *0.01;
 //        dx += dv * 0.01;
-//    }
-//    Serial.print("Distance ");
+//     }
+      
+//    dv = 0;
+//    dx = 0;
+    
 //    Serial.println(dx);
     
 
     
-    if(!armed) //if drone is not armed
-    {
-        if(aux2_chan>=1200) //arm command
-        {
-            apply_aux2(1000);
-            apply_aux1(1000);
-            apply_throttle(885); //throttle needs to be at this value for drone to be armed
-            arm(); //arm the drone
-        }
-
-    }else{
-        //Serial.print("Im here");
-
-        if(manual)  //if drone is in the manual
-        {
-            //set throttle,pitch,yaw,roll from reciever
-            apply_throttle(throttle_chan);
-            apply_yaw(yaw_chan);
-            apply_roll(roll_chan);
-            apply_pitch(pitch_chan);
-            //reset_pids(); //used to reset pid controller 
-
-        }else{ //if drone is in automatic
-           
-            update_gps_reading(); //update gps location
-            update_altitude();
-           
-            apply_throttle(current_throttle);
-            apply_pitch(current_pitch);
-            apply_yaw(current_yaw);
-            apply_roll(current_roll);
-
-            //update sensor values from naze
-            //update_attitude()update_altitude();
-            //if(gpsFix) //when we have a gps fix
-            //{
-                
-                if(!ready_to_fly)
-                {
-                    if(drone_altitude.estimatedActualPosition != 0) //if drone has altitude
-                    {
-                        //get home position
-                        startPos.lat = current_location.lat;
-                        startPos.lng = current_location.lng;
-                        
-                        ready_to_fly = true;
-                        time_to_fly = millis();
-                        desired_height = drone_altitude.estimatedActualPosition + HEIGHT;
-                    }
-                }
-            //}
-
-            if(ready_to_fly)
-            {
-                //used to maintain a certain height
-                stabilize_height();
-
-//                if(millis() - time_to_fly > 3000) //after 3 seconds start mission
-//                {
-//                    //Serial.println("Im ready");
-//                    at_height = true;
-//                }
+//    if(!armed) //if drone is not armed
+//    {
+//        if(aux2_chan>=1200) //arm command
+//        {
+//            apply_aux2(1000);
+//            apply_aux1(1000);
+//            apply_throttle(885); //throttle needs to be at this value for drone to be armed
+//            arm(); //arm the drone
+//        }
 //
-//                if(at_height)
+//    }else{
+//        //Serial.print("Im here");
+//
+//        if(manual)  //if drone is in the manual
+//        {
+//            //set throttle,pitch,yaw,roll from reciever
+//            apply_throttle(throttle_chan);
+//            apply_yaw(yaw_chan);
+//            apply_roll(roll_chan);
+//            apply_pitch(pitch_chan);
+//            //reset_pids(); //used to reset pid controller 
+//
+//        }else{ //if drone is in automatic
+//           
+//            update_gps_reading(); //update gps location
+//            update_altitude();
+//           
+//            apply_throttle(current_throttle);
+//            apply_pitch(current_pitch);
+//            apply_yaw(current_yaw);
+//            apply_roll(current_roll);
+//
+//            //update sensor values from naze
+//            //update_attitude()update_altitude();
+//            //if(gpsFix) //when we have a gps fix
+//            //{
+//                
+//                if(!ready_to_fly)
 //                {
-//                    if(!mission_done)
+//                    if(drone_altitude.estimatedActualPosition != 0) //if drone has altitude
 //                    {
-//                       //Serial3.println("Im flying");
-//                       flight_mission(); //start navigation mission
+//                        //get home position
+//                        startPos.lat = current_location.lat;
+//                        startPos.lng = current_location.lng;
+//                        
+//                        ready_to_fly = true;
+//                        time_to_fly = millis();
+//                        desired_height = drone_altitude.estimatedActualPosition + HEIGHT;
 //                    }
 //                }
-            }
-        }
-    }
-
-    if(armed && aux2_chan <= 1200)
-    {
-        disarm(); //disarm if aux2 is set to 1000
-    }
-
-    if(aux1_chan<=1200) //used to set to manual control
-    {
-        manual = true;
-    }else if(aux1_chan>=1700){ 
-        manual = false;
-    }
+//            //}
+//
+//            if(ready_to_fly)
+//            {
+//                //used to maintain a certain height
+//                stabilize_height();
+//
+////                if(millis() - time_to_fly > 3000) //after 3 seconds start mission
+////                {
+////                    //Serial.println("Im ready");
+////                    at_height = true;
+////                }
+////
+////                if(at_height)
+////                {
+////                    if(!mission_done)
+////                    {
+////                       //Serial3.println("Im flying");
+////                       flight_mission(); //start navigation mission
+////                    }
+////                }
+//            }
+//        }
+//    }
+//
+//    if(armed && aux2_chan <= 1200)
+//    {
+//        disarm(); //disarm if aux2 is set to 1000
+//    }
+//
+//    if(aux1_chan<=1200) //used to set to manual control
+//    {
+//        manual = true;
+//    }else if(aux1_chan>=1700){ 
+//        manual = false;
+//    }
 //
 //      Serial.print("Throttle ");
 //      Serial.print(throttle_chan);
@@ -471,6 +490,41 @@ set_up_filters()
     filter_roll = new low_pass(20,0.01);
     filter_pitch = new low_pass(20,0.01);
     filter_alt = new low_pass(20,0.01);
+
+    state_x_kalman_filter = new KalmanFilter(0.0f, 0.0f, pos_stddev, accy_stddev);
+    state_y_kalman_filter = new KalmanFilter(0.0f, 0.0f, pos_stddev , accx_stddev);
+}
+
+static void calculate_standard_deviation()
+{
+    int sum_x = 0;
+    int sum_y = 0;
+    float accx[100];
+    float accy[100];
+    for(int i=0;i<100;i++){
+          update_imu();
+          accx[i] = drone_imu.acc[0];
+          accy[i] = drone_imu.acc[1];
+          sum_x += accx[i];
+          sum_y += accy[i];
+
+    }
+    float avg_x = sum_x / 100.0;
+    float avg_y = sum_y / 100.0;
+
+    float sum_dev_x = 0;
+    float sum_dev_y = 0;
+    for(int j=0; j < 100; j++)
+    {
+        sum_dev_x += ((accx[j] - avg_x) * (accx[j] - avg_x));
+        sum_dev_y += ((accy[j] - avg_y) * (accy[j] - avg_y));
+    }
+    float variance_x = sum_dev_x / 100.0;
+    float variance_y = sum_dev_y / 100.0;
+    Serial.print("VarianceX: ");
+    Serial.print(variance_x);
+    Serial.print("VarianceY: ");
+    Serial.println(variance_y);
 }
 
 static void 
@@ -481,6 +535,8 @@ reset_pids()
     yawPID->reset_pid();
     pitchPID->reset_pid();
 }
+
+
 
 static int 
 get_heading()
@@ -651,7 +707,11 @@ flight_mission(void)
     }else{
         roll_error = -distance_x;
     }
+
+//    Serial.print("Measured roll ");
+//    Serial.print(roll_error);
     
+
     
     float bearing_y, distance_y; //vertical distance
     
@@ -665,7 +725,29 @@ flight_mission(void)
     }else{
         pitch_error = -distance_y;
     }
+
+
+    //Kalman Stuff
+    float dt = last_udpate - millis();
+
+    float pitch_vel = (last_pitch_error - pitch_error)/dt;
+    float roll_vel = (last_pitch_error - pitch_error)/dt;
+
+    last_udpate = millis();
     
+
+    state_y_kalman_filter->Predict((float)drone_imu.acc[1],dt);
+    state_x_kalman_filter->Predict((float)drone_imu.acc[0],dt);
+//    state_y_kalman_filter->Update(pitch_error,pitch_vel,0.0f,0.0f);
+//    state_x_kalman_filter->Update(roll_error,roll_vel,0.0f,0.0f);
+
+    pitch_error = state_y_kalman_filter->getPosition();
+    roll_error = state_x_kalman_filter->getPosition();
+
+    Serial.print("Predicted Roll ");
+    Serial.println(roll_error);
+
+
 
     //update pid controllers with new error
     float rollPIDVal = rollPID->updatePID(roll_error);  

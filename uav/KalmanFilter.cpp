@@ -4,81 +4,98 @@
 
 KalmanFilter::KalmanFilter(float init_pos,float init_velocity,float pos_stddev,float acc_stddev)
 {
-	this->current_state = new Matrix(2, 1);
+	this->current_state.init(2, 1);
+ 
+	this->current_state.Put(0, 0, init_pos);
+	this->current_state.Put(1, 0, init_velocity);
 
-	this->current_state->put(0, 0, init_pos);
-	this->current_state->put(1, 0, init_velocity);
-
-
-	this->u = new Matrix(1, 1);
-	this->z = new Matrix(2, 1);
-	this->H = new Matrix::Identity(2, 2);
-	this->P = new Matrix(2, 2);
+	this->u.init(1, 1);
+	this->z.init(2, 1);
+	this->H = Matrix::Identity(2, 2);
+	this->P.init(2, 2);
 	this->I = Matrix::Identity(2,2);
 
-	this->Q = new Matrix(2, 2);
-	this->Q->put(0,0,acc_stddev * acc_stddev);
-	this->Q->put(1,1, acc_stddev * acc_stddev);
+	this->Q.init(2, 2);
+	this->Q.Put(0,0,acc_stddev * acc_stddev);
+	this->Q.Put(1,1, acc_stddev * acc_stddev);
 
-	this->R =new Matrix(2 ,2);
-	this->R->put(0, 0, pos_stddev * pos_stddev);
-	this->R->put(1, 1, pos_stddev * pos_stddev);
+	this->R.init(2 ,2);
+	this->R.Put(0, 0, pos_stddev * pos_stddev);
+	this->R.Put(1, 1, pos_stddev * pos_stddev);
 
-	this->B = new Matrix(2, 2);
-	this->A = new Matrix(2, 2);
+	this->B.init(2, 2);
+	this->A.init(2, 2);
 
 }
 
 
 void KalmanFilter::update_control_matrix(float dt)
 {
-	this->B->put(0, 0, 0.5 * dt * dt)
-	this->B->put(1, 1, dt);
+	this->B.Put(0, 0, 0.5 * dt * dt);
+	this->B.Put(1, 0, dt);
 
 }
 
 void KalmanFilter::update_state_transition_matrix(float dt)
 {
-	this->A->put(0, 0, 1.0f);
-	this->A->put(0, 1, dt);
-	this->A->put(1, 0, 0.0f);
-	this->A->put(1, 1, 1.0f);
-}
-
-float KalmanFilter::get_position()
-{
-	return this->current_state->get(0,0);
-
-}
-
-float KalmanFilter::get_velocity()
-{
-	return this->current_state->get(1, 1);
+	this->A.Put(0, 0, 1.0f);
+	this->A.Put(0, 1, dt);
+	this->A.Put(1, 0, 0.0f);
+	this->A.Put(1, 1, 1.0f);
 }
 
 
-void KalmanFilter::predict(float accel)
+//returns the current position
+float KalmanFilter::getPosition()
 {
-	this->update_control_matrix();
-	this->update_state_transition_matrix();
-
-	this->u->put(0,0,accel);
-
-	this->current_state = (this->A.multiply(this->current_state))->add(this->B->multiply(this->u));
-	this->P = ((this->A.multiply(this->P))->multiply(this->A->transpose()))->add(this->Q);
+	return this->current_state.Get(0,0);
 
 }
 
-void KalmanFilter::update(float position, float velocity, float pos_error, float velocity_error)
+
+//returns the current velocity
+float KalmanFilter::getVelocity()
 {
+	return this->current_state.Get(1, 1);
+}
 
-	Matrix * y = this->z.subtract(this->H->multiply(this->current_state));
 
-	Matrix * S = (this->H->multiply(this->P->multiply(this->H->transpose())))->add(this->R);
+//predict the next state
+// x = Ax-1 + Bu  //state prediction (Predict where were gonna be)
+// P = AP-1A^t + Q //covariance prediction(Predict how much error)
+void KalmanFilter::Predict(float accel, float dt)
+{
+	this->update_control_matrix(dt);
+	this->update_state_transition_matrix(dt);
 
-	Matrix * K = (this->P->multiply(this->H->transpose()))->multiply(S->inverse());
+	this->u.Put(0,0,accel);
+ 
+	this->current_state = this->A.Multiply(this->current_state).Add(this->B.Multiply(this->u));
+	this->P = this->A.Multiply(this->P).Multiply(this->A.Transpose()).Add(this->Q);
 
-	this->current_state = this->current_state->add(K->multiply(y));
+}
 
-	this->P = (this->I->subtract(K->multiply(this->H)))->multiply(this->P);
+
+//Update state and covariance
+// y = z - Hx (Innovation - Compare reality against prediction)
+// S = HPH^t + R (Innovation Covariance - Compare real error against predicition)
+// K = PH^tS^-1 (Kalman Gain - Moderate the predicition)
+// x = x + Ky (State Update - New estimate of where we are)
+// P = (I - KH)P (Covariance Update - New estimate of error)
+void KalmanFilter::Update(float pos, float velocity, float pos_error, float velocity_error)
+{
+	this->z.Put(0, 0, pos);
+	this->z.Put(1, 0, velocity);
+
+	Matrix y = this->z.Subtract(this->H.Multiply(this->current_state));
+
+	Matrix S = (this->H.Multiply(this->P.Multiply(this->H.Transpose()))).Add(this->R);
+
+    S.Inverse();
+
+	Matrix K = (this->P.Multiply(this->H.Transpose())).Multiply(S);
+
+	this->current_state = this->current_state.Add(K.Multiply(y));
+
+	this->P = (this->I.Subtract(K.Multiply(this->H))).Multiply(this->P);
 }
