@@ -352,113 +352,94 @@ setup(void)
 void
 loop(void)
 {
-    //Serial.println("hello");
-    flight_mission();
-//
-//    Serial.println("Hello");
-    
 
-     //for(int i=0;i<100;i++){
-//          update_imu();
-//          Serial.println(drone_imu.acc[0]);
-//        float accel = filter_alt->update(drone_imu.acc[1]);
-//        dv += accel  *0.01;
-//        dx += dv * 0.01;
-//     }
-      
-//    dv = 0;
-//    dx = 0;
-    
-//    Serial.println(dx);
-    
+   if(!armed) //if drone is not armed
+   {
+       if(aux2_chan>=1200) //arm command
+       {
+           apply_aux2(1000);
+           apply_aux1(1000);
+           apply_throttle(885); //throttle needs to be at this value for drone to be armed
+           arm(); //arm the drone
+       }
 
-    
-//    if(!armed) //if drone is not armed
-//    {
-//        if(aux2_chan>=1200) //arm command
-//        {
-//            apply_aux2(1000);
-//            apply_aux1(1000);
-//            apply_throttle(885); //throttle needs to be at this value for drone to be armed
-//            arm(); //arm the drone
-//        }
-//
-//    }else{
-//        //Serial.print("Im here");
-//
-//        if(manual)  //if drone is in the manual
-//        {
-//            //set throttle,pitch,yaw,roll from reciever
-//            apply_throttle(throttle_chan);
-//            apply_yaw(yaw_chan);
-//            apply_roll(roll_chan);
-//            apply_pitch(pitch_chan);
-//            //reset_pids(); //used to reset pid controller 
-//
-//        }else{ //if drone is in automatic
-//           
-//            update_gps_reading(); //update gps location
-//            update_altitude();
-//           
-//            apply_throttle(current_throttle);
-//            apply_pitch(current_pitch);
-//            apply_yaw(current_yaw);
-//            apply_roll(current_roll);
-//
-//            //update sensor values from naze
-//            //update_attitude()update_altitude();
-//            //if(gpsFix) //when we have a gps fix
-//            //{
-//                
-//                if(!ready_to_fly)
-//                {
-//                    if(drone_altitude.estimatedActualPosition != 0) //if drone has altitude
-//                    {
-//                        //get home position
-//                        startPos.lat = current_location.lat;
-//                        startPos.lng = current_location.lng;
-//                        
-//                        ready_to_fly = true;
-//                        time_to_fly = millis();
-//                        desired_height = drone_altitude.estimatedActualPosition + HEIGHT;
-//                    }
-//                }
-//            //}
-//
-//            if(ready_to_fly)
-//            {
-//                //used to maintain a certain height
-//                stabilize_height();
-//
-////                if(millis() - time_to_fly > 3000) //after 3 seconds start mission
-////                {
-////                    //Serial.println("Im ready");
-////                    at_height = true;
-////                }
-////
-////                if(at_height)
-////                {
-////                    if(!mission_done)
-////                    {
-////                       //Serial3.println("Im flying");
-////                       flight_mission(); //start navigation mission
-////                    }
-////                }
-//            }
-//        }
-//    }
-//
-//    if(armed && aux2_chan <= 1200)
-//    {
-//        disarm(); //disarm if aux2 is set to 1000
-//    }
-//
-//    if(aux1_chan<=1200) //used to set to manual control
-//    {
-//        manual = true;
-//    }else if(aux1_chan>=1700){ 
-//        manual = false;
-//    }
+   }else{
+       
+
+       if(manual)  //if drone is in the manual
+       {
+           //set throttle,pitch,yaw,roll from reciever
+           apply_throttle(throttle_chan);
+           apply_yaw(yaw_chan);
+           apply_roll(roll_chan);
+           apply_pitch(pitch_chan);
+           //reset_pids(); //used to reset pid controller 
+
+       }else{ //if drone is in automatic
+          
+           update_gps_reading(); //update gps location
+           update_altitude(); //barometer
+           update_imu(); //accel,gyro
+          
+           apply_throttle(current_throttle);
+           apply_pitch(current_pitch);
+           apply_yaw(current_yaw);
+           apply_roll(current_roll);
+
+           //update sensor values from naze
+           //update_attitude()update_altitude();
+           if(gpsFix) //when we have a gps fix
+           {
+               
+               if(!ready_to_fly)
+               {
+                   if(drone_altitude.estimatedActualPosition != 0) //if drone has altitude
+                   {
+                       //get home position
+                       startPos.lat = current_location.lat;
+                       startPos.lng = current_location.lng;
+                       
+                       ready_to_fly = true;
+                       time_to_fly = millis();
+                       desired_height = drone_altitude.estimatedActualPosition + HEIGHT;
+                   }
+               }
+           }
+
+           if(ready_to_fly)
+           {
+               //used to maintain a certain height
+               stabilize_height();
+
+               if(millis() - time_to_fly > 3000) //after 3 seconds start mission
+               {
+                   //Serial.println("Im ready");
+                   at_height = true;
+               }
+
+               if(at_height)
+               {
+                   if(!mission_done)
+                   {
+                      //Serial3.println("Im flying");
+                      flight_mission(); //start navigation mission
+                   }
+               }
+           }
+       }
+   }
+
+   if(armed && aux2_chan <= 1200)
+   {
+       disarm(); //disarm if aux2 is set to 1000
+   }
+
+   if(aux1_chan<=1200) //used to set to manual control
+   {
+       manual = true;
+   }else if(aux1_chan>=1700){ 
+       manual = false;
+   }
 //
 //      Serial.print("Throttle ");
 //      Serial.print(throttle_chan);
