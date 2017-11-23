@@ -1,6 +1,6 @@
 #include "Matrix.h"
 //#include <stdio.h>
-//#include <Arduino.h>
+
 
 
 void Matrix::init(int nrows, int ncols)
@@ -11,15 +11,18 @@ void Matrix::init(int nrows, int ncols)
 
 }
 
-Matrix::~Matrix() //destructor
-{
-    free(this->matrix);
-}
+
+
 
 //Puts element at row and column
 void Matrix::Put(int row,int col, float value)
 {
 	this->matrix[this->n_cols*row + col] = value;
+}
+
+void Matrix::freeMemory()
+{
+    free(this->matrix);
 }
 
 
@@ -28,6 +31,15 @@ float Matrix::Get(int row, int col)
 {
 	return this->matrix[this->n_cols*row + col];
 }
+
+void Matrix::setMatrix(Matrix m2)
+{
+	int i,j;
+	for(i =0; i < m2.n_rows; i++)
+		for(j=0; j < m2.n_cols; j++)
+			this->Put(i,j,m2.Get(i,j));
+}
+
 
 
 //Returns identity matrix
@@ -79,19 +91,21 @@ Matrix Matrix::Subtract(Matrix  m2)
 Matrix Matrix::Multiply(Matrix m2)
 {
 	int i,j,k;
+	float sum;
 	Matrix m3;
 	m3.init(this->n_rows,m2.n_cols);
 	for (i=0; i < this->n_rows; i++)
 	{
-		for(j=0; j < this->n_cols; j++)
+		for(j=0; j < m2.n_cols; j++)
 		{
-			int sum = 0;
-			for(k=0; k < this->n_cols; k++)
+			for(k=0; k < this->n_rows; k++)
 			{
+
 				sum += this->Get(i,k) * m2.Get(k,j);
 				
 			}
 			m3.Put(i,j,sum);
+            sum = 0;
 		}
 	}
 	return m3;
@@ -102,12 +116,12 @@ Matrix Matrix::Multiply(Matrix m2)
 Matrix Matrix::Transpose()
 {
 	int i,j;
-	Matrix m3;
-	m3.init(this->n_cols,this->n_rows);
+	Matrix mt;
+	mt.init(this->n_cols,this->n_rows);
 	for(i=0; i < this->n_rows; i++)
 		for(j=0; j < this->n_cols; j++)
-			m3.Put(j,i,this->Get(i,j));
-	return m3;
+			mt.Put(j,i,this->Get(i,j));
+	return mt;
 }
 
 //Prints a matrix
@@ -115,9 +129,18 @@ void Matrix::printMatrix()
 {
 	int i,j;
 	for(i = 0; i < this->n_rows; i++)
+	{
 		for(j=0; j < this->n_cols; j++)
-			cout << this->Get(i,j) << " ";
-		cout << "\n";
+		{
+			printf("%.4f ",this->Get(i,j));
+			//Serial.print(this->Get(i,j));
+		}
+		
+
+	}
+	printf("\n");
+        //Serial.println();
+		
 }
 
 //Finds inverse of matrix using Gauss Jordan method
