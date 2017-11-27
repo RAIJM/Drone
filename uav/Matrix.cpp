@@ -132,14 +132,14 @@ void Matrix::printMatrix()
 	{
 		for(j=0; j < this->n_cols; j++)
 		{
-			printf("%.4f ",this->Get(i,j));
-			//Serial.print(this->Get(i,j));
+			//printf("%.4f ",this->Get(i,j));
+			Serial.print(this->Get(i,j));
 		}
 		
 
 	}
-	printf("\n");
-        //Serial.println();
+	//printf("\n");
+    Serial.println();
 		
 }
 

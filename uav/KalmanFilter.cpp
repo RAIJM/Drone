@@ -91,10 +91,6 @@ void KalmanFilter::Predict(float accel, float dt)
     apt.freeMemory();
     apt_q.freeMemory();
 
-   
-	//his->current_state = (this->A.Multiply(this->current_state)).Add(this->B.Multiply(this->u));
-    //this->P = this->A.Multiply(this->P).Multiply(this->A.Transpose()).Add(this->Q);
-
 }
 
 
@@ -117,13 +113,15 @@ void KalmanFilter::Update(float pos, float velocity, float pos_error, float velo
 	Matrix p_ht = this->P.Multiply(ht);
 	Matrix hpht = this->H.Multiply(p_ht);
 	Matrix S = hpht.Add(this->R);
-	S.Inverse();
-	
+    
+    S.Inverse();
+    
 	Matrix K = p_ht.Multiply(S);
 	Matrix K_y = K.Multiply(y);
 	Matrix x_Ky = this->current_state.Add(K_y);
 
 	this->current_state.setMatrix(x_Ky);
+   
 
 
 	Matrix k_h  = K.Multiply(this->H);
