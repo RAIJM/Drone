@@ -227,6 +227,9 @@ float last_update = millis(); //timer for kalman filter update
 
 char buf[10];
 
+float check_failsafe = true;
+float check_timer;
+
 
 
 
@@ -289,6 +292,7 @@ static int get_heading();
 static bool update_imu();
 static void calculate_standard_deviation();
 static void send_bluetooth_data();
+static void failsafe();
 
 
 
@@ -367,6 +371,7 @@ void
 loop(void)
 {
 
+
     if(!armed) //if drone is not armed
     {
         
@@ -381,6 +386,8 @@ loop(void)
    
     }else{
 
+        failsafe(); //if communication is lost to reciever switch to manual and set throttle to minimum to land
+
         if(manual)  //if drone is in the manual
         {
            //set throttle,pitch,yaw,roll from reciever
@@ -388,6 +395,7 @@ loop(void)
             apply_yaw(yaw_chan);
             apply_roll(roll_chan);
             apply_pitch(pitch_chan);
+            Serial.println("Im here");
             //reset_pids(); //used to reset pid controller 
 
         }else{ //if drone is in automatic
@@ -470,20 +478,45 @@ loop(void)
         manual = false;
     }
 //
-//      Serial.print("Throttle ");
-//      Serial.print(throttle_chan);
-//      Serial.print("Pitch ");
-//      Serial.print(pitch_chan);
-//      Serial.print("Roll ");
-//      Serial.print(roll_chan);
-//      Serial.print("Yaw ");
-//      Serial.print(yaw_chan);
-//      Serial.print("Aux1 ");
-//      Serial.print(aux1_chan);
-//      Serial.print("Aux2 ");
-//      Serial.println(aux2_chan);
+     Serial.print("Throttle ");
+     Serial.print(throttle_chan);
+     Serial.print("Pitch ");
+     Serial.print(pitch_chan);
+     Serial.print("Roll ");
+     Serial.print(roll_chan);
+     Serial.print("Yaw ");
+     Serial.print(yaw_chan);
+     Serial.print("Aux1 ");
+     Serial.print(aux1_chan);
+     Serial.print("Aux2 ");
+     Serial.println(aux2_chan);
 
     
+}
+
+
+static void failsafe()
+{
+
+    if(check_failsafe){
+        aux1_chan = 0;
+        check_failsafe = false;
+        check_timer = millis();
+    }
+
+    if(!check_failsafe){
+        if(millis() - check_timer > 1000)
+        {
+            if(aux1_chan <= 0)
+            {
+                manual = true;
+                throttle_chan = 1000;
+            }else{
+                check_failsafe = true;
+            }
+            
+        }
+    }
 }
 
 
