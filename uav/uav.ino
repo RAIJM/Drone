@@ -225,6 +225,8 @@ float last_roll_error = 0.0;
 
 float last_update = millis(); //timer for kalman filter update
 
+char buf[10];
+
 
 
 
@@ -286,6 +288,7 @@ static void reset_pids();
 static int get_heading();
 static bool update_imu();
 static void calculate_standard_deviation();
+static void send_bluetooth_data();
 
 
 
@@ -316,7 +319,7 @@ setup(void)
     Compass.SetDeclination(-7, 34, 'W');
     Compass.SetSamplingMode(COMPASS_SINGLE);
     Compass.SetScale(COMPASS_SCALE_130);  
-    Compass.SetOrientation(COMPASS_HORIZONTAL_X_NORTH);
+    Compass.SetOrientation(COMPASS_HORIZONTAL_Y_NORTH);
     
     delay(1000);
 
@@ -336,7 +339,7 @@ setup(void)
 
     
      
-    //Serial3.begin(38400); //bluetooth serial
+    Serial3.begin(38400); //bluetooth serial
     
     Serial2.begin(115200); //serial for naze32
     msp.begin(Serial2);
@@ -363,23 +366,24 @@ setup(void)
 void
 loop(void)
 {
-    
+
     if(!armed) //if drone is not armed
     {
+        
         if(aux2_chan>=1200) //arm command
         {
+        
             apply_aux2(1000);
             apply_aux1(1000);
             apply_throttle(885); //throttle needs to be at this value for drone to be armed
             arm(); //arm the drone
         }
-
+   
     }else{
 
         if(manual)  //if drone is in the manual
         {
-
-            //set throttle,pitch,yaw,roll from reciever
+           //set throttle,pitch,yaw,roll from reciever
             apply_throttle(throttle_chan);
             apply_yaw(yaw_chan);
             apply_roll(roll_chan);
@@ -404,31 +408,39 @@ loop(void)
             {
                 if(!ready_to_fly)
                 {
-                    
                     if(drone_altitude.estimatedActualPosition != 0) //if drone has altitude
                     {
-                        
+
                         //get home position
                         startPos.lat = current_location.lat;
                         startPos.lng = current_location.lng;
-                      
+
+                        float sum_height = 0;
+                        float avg_height = 0;
+                        for(int i=0; i < 100; i++)
+                        {
+                            update_altitude();
+                            sum_height += drone_altitude.estimatedActualPosition;
+                        }
+
+                        avg_height = sum_height / 100.0; //average the recorded altitiude
+                     
                         ready_to_fly = true;
                         time_to_fly = millis();
-                        desired_height = drone_altitude.estimatedActualPosition + HEIGHT; //set desired height from reference point
+                        desired_height = avg_height + HEIGHT; //set desired height from reference point
                     }
                 }
             }
 
             if(ready_to_fly)
             {
-             
+
                 //used to maintain a certain height
                 if(!mission_done)
-                    stabilize_height();
+                   stabilize_height();
 
                 if(millis() - time_to_fly > 3000) //after 3 seconds start mission
                 {
-                  
                     at_height = true;
                 }
 
@@ -436,7 +448,8 @@ loop(void)
                 {
                     if(!mission_done)
                     {
-                         //Serial3.println("Im flying");
+                        
+                        //Serial3.println("Im flying");
                         flight_mission(); //start navigation mission
                     }
                 }
@@ -446,6 +459,7 @@ loop(void)
 
     if(armed && aux2_chan <= 1200)
     {
+       
         disarm(); //disarm if aux2 is set to 1000
     }
 
@@ -486,6 +500,15 @@ set_up_filters()
     state_y_kalman_filter = new KalmanFilter(0.0f, 0.0f, pos_stddev , accy_stddev);
 }
 
+static void send_bluetooth_data()
+{
+    
+    sprintf(buf,"%d %d %d %d %d %d %d %d %d %d \n",drone_attitude.pitch,drone_attitude.roll,drone_attitude.yaw,current_throttle,current_roll,
+                                current_pitch,current_yaw,drone_altitude.estimatedActualPosition,current_location.lat,current_location.lng);
+    Serial.print(buf);
+    Serial3.write(buf,20);
+}
+
 static void calculate_standard_deviation()
 {
     int sum_x = 0;
@@ -494,16 +517,18 @@ static void calculate_standard_deviation()
     float accx[100];
     float accy[100];
     float accz[100];
-    for(int i=0;i<100;i++){
-          update_imu();
-          accx[i] = drone_imu.acc[0];
-          accy[i] = drone_imu.acc[1];
-          accz[i] = drone_imu.acc[2];
-          sum_x += accx[i];
-          sum_y += accy[i];
-          sum_z += accz[i];
+    for(int i=0;i<100;i++)
+    {
+        update_imu();
+        accx[i] = drone_imu.acc[0];
+        accy[i] = drone_imu.acc[1];
+        accz[i] = drone_imu.acc[2];
+        sum_x += accx[i];
+        sum_y += accy[i];
+        sum_z += accz[i];
 
     }
+
     float avg_x = sum_x / 100.0;
     float avg_y = sum_y / 100.0;
     float avg_z = sum_z / 100.0;
@@ -542,18 +567,20 @@ reset_pids()
 static int 
 get_heading()
 {
-    int heading = (int)Compass.GetHeadingDegrees();
-    int angle;
+    int angle = (int)Compass.GetHeadingDegrees();
+    int heading;
 
     //heading is off by 90 degrees
-    if(heading < 90)
+    if(angle < 260)
     {
-      angle = 360 - (90 - heading);
+        //heading = 180 + angle;
+      heading = 360 - (260 - angle);
     }else{
-      angle = heading - 90;
+        //angle = heading - 90;
+        heading = angle - 260;
     }
 
-    return angle;
+    return heading;
 }
 
 
@@ -582,6 +609,7 @@ update_gps_reading()
     while (gpsSerial.available()) 
     {
         char c = gpsSerial.read();
+        Serial.print(c);
         if (gps.encode(c)) //if we got a fix
         {
             newdata = true;
@@ -692,7 +720,7 @@ flight_mission(void)
     LatLng current_dest;
 
     //float heading = filter_yaw->update((float)convert_360_to_180(drone_attitude.yaw));
-    float heading = filter_yaw->update((float)convert_360_to_180(get_heading()));
+    float heading = filter_yaw->update((float)get_heading());
     
 
     if(!pos_hold) //if not is position hold mode
@@ -757,16 +785,19 @@ flight_mission(void)
    // Serial.print("Predicted Roll ");
    // Serial.println(roll_error);
 
+    
+    float heading_rads = degrees_to_radians(heading);
 
 
     //update pid controllers with new error
     float rollPIDVal = rollPID->updatePID(roll_error);  
     float pitchPIDVal = pitchPID->updatePID(pitch_error);
     float yawPIDVal  = yawPID->updatePID(0.0 - heading);
-    
+
+
     //calculate pitch,roll and yaw
-    float desired_roll = toPWM(radians_to_degrees((rollPIDVal * cos(heading) + pitchPIDVal * sin(heading)) * (1/g)));
-    float desired_pitch = toPWM(radians_to_degrees((pitchPIDVal * cos(heading) - rollPIDVal * sin(heading)) * (1/g)));
+    float desired_roll = toPWM(radians_to_degrees((rollPIDVal * cos(heading_rads) - pitchPIDVal * sin(heading_rads)) * (1/g)));
+    float desired_pitch = toPWM(radians_to_degrees((rollPIDVal * sin(heading_rads) + pitchPIDVal * cos(heading_rads)) * (1/g)));
     float desired_yaw = 1500 - (yawPIDVal * (500/3.14));
 
     //set pitch, roll and yaw
@@ -814,7 +845,7 @@ flight_mission(void)
             current_throttle = 1000;
            //desired_yaw = 1500;
            //desired_roll = 1500;
-       }
+        }
     }    
 
 }
@@ -841,7 +872,7 @@ static void get_naze_data()
 static void populate_waypoints()
 {
     current_location.lat = 18.00445;
-    current_location.lng = -76.74830;
+    current_location.lng = -76.74820;
     
     LatLng dest;
     dest.lat = 18.00440;
@@ -985,9 +1016,6 @@ stabilize_height(void)
 //    Serial.print(distance);
 //    Serial.print(" error ");
 //    Serial.println(error);
-    
-    
-    
     
 }
 
@@ -1265,7 +1293,7 @@ deg_to_rad(float deg)
 static float
 rad_to_deg(float rad)
 {
-    return (rad * 180) / M_PI;
+    return (rad / 180.0) * M_PI;
 }
 
 

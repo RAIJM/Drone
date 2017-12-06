@@ -14,6 +14,12 @@ float radians_to_degrees(float x)
 }
 
 
+float degrees_to_radians(float x)
+{
+	return x * 0.0174533;
+}
+
+
 class low_pass
 {
     private:
