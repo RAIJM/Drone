@@ -225,7 +225,7 @@ float last_roll_error = 0.0;
 
 float last_update = millis(); //timer for kalman filter update
 
-char buf[10];
+char buf[24];
 
 float check_failsafe = true;
 float check_timer;
@@ -371,7 +371,6 @@ void
 loop(void)
 {
 
-
     if(!armed) //if drone is not armed
     {
         
@@ -390,12 +389,12 @@ loop(void)
 
         if(manual)  //if drone is in the manual
         {
-           //set throttle,pitch,yaw,roll from reciever
+            //set throttle,pitch,yaw,roll from reciever
             apply_throttle(throttle_chan);
             apply_yaw(yaw_chan);
             apply_roll(roll_chan);
             apply_pitch(pitch_chan);
-            Serial.println("Im here");
+            //Serial.println("Im here");
             //reset_pids(); //used to reset pid controller 
 
         }else{ //if drone is in automatic
@@ -432,7 +431,7 @@ loop(void)
                         }
 
                         avg_height = sum_height / 100.0; //average the recorded altitiude
-                     
+                    
                         ready_to_fly = true;
                         time_to_fly = millis();
                         desired_height = avg_height + HEIGHT; //set desired height from reference point
@@ -445,7 +444,7 @@ loop(void)
 
                 //used to maintain a certain height
                 if(!mission_done)
-                   stabilize_height();
+                    stabilize_height();
 
                 if(millis() - time_to_fly > 3000) //after 3 seconds start mission
                 {
@@ -456,7 +455,7 @@ loop(void)
                 {
                     if(!mission_done)
                     {
-                        
+                       
                         //Serial3.println("Im flying");
                         flight_mission(); //start navigation mission
                     }
@@ -477,19 +476,21 @@ loop(void)
     }else if(aux1_chan>=1700){ 
         manual = false;
     }
-//
-     Serial.print("Throttle ");
-     Serial.print(throttle_chan);
-     Serial.print("Pitch ");
-     Serial.print(pitch_chan);
-     Serial.print("Roll ");
-     Serial.print(roll_chan);
-     Serial.print("Yaw ");
-     Serial.print(yaw_chan);
-     Serial.print("Aux1 ");
-     Serial.print(aux1_chan);
-     Serial.print("Aux2 ");
-     Serial.println(aux2_chan);
+//  
+    send_bluetooth_data();
+//    
+//     Serial.print("Throttle ");
+//     Serial.print(throttle_chan);
+//     Serial.print("Pitch ");
+//     Serial.print(pitch_chan);
+//     Serial.print("Roll ");
+//     Serial.print(roll_chan);
+//     Serial.print("Yaw ");
+//     Serial.print(yaw_chan);
+//     Serial.print("Aux1 ");
+//     Serial.print(aux1_chan);
+//     Serial.print("Aux2 ");
+//     Serial.println(aux2_chan);
 
     
 }
@@ -535,11 +536,45 @@ set_up_filters()
 
 static void send_bluetooth_data()
 {
-    
-    sprintf(buf,"%d %d %d %d %d %d %d %d %d %d \n",drone_attitude.pitch,drone_attitude.roll,drone_attitude.yaw,current_throttle,current_roll,
-                                current_pitch,current_yaw,drone_altitude.estimatedActualPosition,current_location.lat,current_location.lng);
-    Serial.print(buf);
-    Serial3.write(buf,20);
+    int throttle;
+    int pitch;
+    int roll;
+    int yaw;
+    if(manual)
+    {
+        throttle = throttle_chan;
+        pitch = pitch_chan;
+        roll = roll_chan;
+        yaw = yaw_chan;
+    }else{
+        throttle = current_throttle;
+        pitch = current_pitch;
+        roll = current_roll;
+        yaw = current_yaw;
+    }
+    /*sprintf(buf,"%d \n",drone_attitude.pitch,drone_attitude.roll,drone_attitude.yaw,throttle,roll,
+                                pitch,yaw,drone_altitude.estimatedActualPosition);*/
+    String s = "";
+    s += drone_attitude.pitch;
+    s += " ";
+    s += drone_attitude.roll;
+    s += " ";
+    s += drone_attitude.yaw;
+    s += " ";
+    s += throttle;
+    s += " ";
+    s += pitch;
+    s += " ";
+    s += roll;
+    s += " ";
+    s += yaw;
+    s += " ";
+    s += drone_altitude.estimatedActualPosition;
+    s += "\n";
+
+    char resp[40];
+    s.toCharArray(resp,40);
+    int bytes = Serial3.write(resp,sizeof(resp));
 }
 
 static void calculate_standard_deviation()
