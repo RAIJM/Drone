@@ -197,6 +197,11 @@ msp_attitude_t drone_attitude; //attitude vector for drone (pitch,yaw,roll)
 msp_altitude_t drone_altitude; //altitude from barometer
 msp_raw_imu_t drone_imu; //Raw imu values from drone (accx,accy,accz,gyrox,gyroy,gyroz)
 
+float drone_heading;
+
+
+float start_altitude;
+
 low_pass* filter_yaw; //low pass filter for yaw
 low_pass* filter_pitch; //low pass filter for pitch
 low_pass* filter_roll; //low pass filter for roll
@@ -431,6 +436,7 @@ loop(void)
                         }
 
                         avg_height = sum_height / 100.0; //average the recorded altitiude
+                        start_altitude = avg_height;
                     
                         ready_to_fly = true;
                         time_to_fly = millis();
@@ -540,6 +546,9 @@ static void send_bluetooth_data()
     int pitch;
     int roll;
     int yaw;
+    
+    float height = (drone_altitude.estimatedActualPosition - start_altitude)/100.0;
+
     if(manual)
     {
         throttle = throttle_chan;
@@ -559,7 +568,7 @@ static void send_bluetooth_data()
     s += " ";
     s += drone_attitude.roll;
     s += " ";
-    s += drone_attitude.yaw;
+    s += drone_heading;
     s += " ";
     s += throttle;
     s += " ";
@@ -569,11 +578,17 @@ static void send_bluetooth_data()
     s += " ";
     s += yaw;
     s += " ";
-    s += drone_altitude.estimatedActualPosition;
+    s += (drone_altitude.estimatedActualPosition/100.0);
+    s += " ";
+    s += height;
+    s += " ";
+    s += current_location.lat;
+    s += " ";
+    s += current_location.lng;
     s += "\n";
 
-    char resp[40];
-    s.toCharArray(resp,40);
+    char resp[60];
+    s.toCharArray(resp,60);
     int bytes = Serial3.write(resp,sizeof(resp));
 }
 
@@ -647,6 +662,8 @@ get_heading()
         //angle = heading - 90;
         heading = angle - 260;
     }
+    
+    drone_heading = heading;
 
     return heading;
 }
