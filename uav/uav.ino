@@ -286,7 +286,7 @@ static float get_sonar_height();
 static void get_naze_data();
 static int get_ir_height();
 static void gpsdump(TinyGPS &gps);
-static float getFloat(double number, int digits);
+static float getFloat(double number, int digits,char * str);
 static bool update_attitude();
 static void set_up_filters();
 static bool update_altitude();
@@ -298,6 +298,9 @@ static bool update_imu();
 static void calculate_standard_deviation();
 static void send_bluetooth_data();
 static void failsafe();
+static void get_bluetooth_data();
+static void update_pid_values(String inData);
+String getValue(String data, char separator, int index);
 
 
 
@@ -376,6 +379,7 @@ void
 loop(void)
 {
 
+    get_heading();
     if(!armed) //if drone is not armed
     {
         
@@ -484,6 +488,28 @@ loop(void)
     }
 //  
     send_bluetooth_data();
+    get_bluetooth_data();
+
+    Serial.print(throttle_kp);
+    Serial.print(" ");
+    Serial.print(throttle_kd);
+    Serial.print(" ");
+    Serial.print(throttle_ki);
+    Serial.print(" ");
+    Serial.print(pitch_kp);
+    Serial.print(" ");
+    Serial.print(pitch_kd);
+    Serial.print(" ");
+    Serial.print(pitch_ki);
+    Serial.print(" ");
+    Serial.print(roll_kp);
+    Serial.print(" ");
+    Serial.print(roll_kd);
+    Serial.print(" ");
+    Serial.print(roll_ki);
+    Serial.println();
+    
+//    Serial.println("hello");
 //    
 //     Serial.print("Throttle ");
 //     Serial.print(throttle_chan);
@@ -528,6 +554,7 @@ static void failsafe()
 
 
 
+
 static void
 set_up_filters()
 {
@@ -549,6 +576,12 @@ static void send_bluetooth_data()
     
     float height = (drone_altitude.estimatedActualPosition - start_altitude)/100.0;
 
+    char str_lat[13];
+    char str_lng[13]; 
+    getFloat(current_location.lat,5,str_lat);
+    getFloat(current_location.lng,5,str_lng);
+    
+
     if(manual)
     {
         throttle = throttle_chan;
@@ -568,7 +601,7 @@ static void send_bluetooth_data()
     s += " ";
     s += drone_attitude.roll;
     s += " ";
-    s += drone_heading;
+    s += (int)drone_heading;
     s += " ";
     s += throttle;
     s += " ";
@@ -582,14 +615,106 @@ static void send_bluetooth_data()
     s += " ";
     s += height;
     s += " ";
-    s += current_location.lat;
+    s += str_lat;
     s += " ";
-    s += current_location.lng;
+    s += str_lng;
     s += "\n";
 
-    char resp[60];
-    s.toCharArray(resp,60);
+    int len = s.length() + 1;
+
+    char resp[len];
+    s.toCharArray(resp,len);
+    //Serial.print(resp);
     int bytes = Serial3.write(resp,sizeof(resp));
+}
+
+static void get_bluetooth_data()
+{
+    String inData;
+    while (Serial3.available() > 0)
+    {
+        char recieved = Serial3.read();
+        inData += recieved; 
+
+        // Process message when new line character is recieved
+        if (recieved == '\n')
+        {
+            //Serial3.print("Arduino Received: ");
+            
+            if(inData[0] == 's')
+            {
+                Serial3.write("g");
+                //Serial.print(inData);
+                update_pid_values(inData);
+                inData = "";
+            }
+
+             // Clear recieved buffer
+        }
+    }
+}
+
+
+static void update_pid_values(String inData)
+{
+    String str_throttle_kp = getValue(inData,' ',0);
+    String str_throttle_kd = getValue(inData,' ',1);
+    String str_throttle_ki = getValue(inData,' ',2);
+    String str_pitch_kp = getValue(inData,' ',3);
+    String str_pitch_kd = getValue(inData,' ',4);
+    String str_pitch_ki = getValue(inData,' ',5);
+    String str_roll_kp = getValue(inData,' ',6);
+    String str_roll_kd = getValue(inData,' ',7);
+    String str_roll_ki = getValue(inData, ' ',8);
+
+    throttle_kp = (str_throttle_kp.substring(1,str_throttle_kp.length())).toFloat();
+    throttle_kd = str_throttle_kd.toFloat();
+    throttle_ki = str_throttle_ki.toFloat();
+    roll_kp = str_roll_kp.toFloat();
+    roll_kd = str_roll_kd.toFloat();
+    roll_ki = str_roll_ki.toFloat();
+    pitch_kp = str_pitch_kp.toFloat();
+    pitch_kd = str_pitch_kd.toFloat();
+    pitch_ki = str_pitch_ki.toFloat();
+   
+    
+}
+
+String getValue(String data, char separator, int index)
+{
+  int found = 0;
+  int strIndex[] = {0, -1};
+  int maxIndex = data.length()-1;
+
+  for(int i=0; i<=maxIndex && found<=index; i++){
+    if(data.charAt(i)==separator || i==maxIndex){
+        found++;
+        strIndex[0] = strIndex[1]+1;
+        strIndex[1] = (i == maxIndex) ? i+1 : i;
+    }
+  }
+
+  return found>index ? data.substring(strIndex[0], strIndex[1]) : "";
+}
+
+
+static void get_naze_data()
+{
+    String inData;
+    while (Serial.available() > 0)
+    {
+        char recieved = Serial.read();
+        inData += recieved; 
+
+        // Process message when new line character is recieved
+        if (recieved == '\n')
+        {
+            Serial3.print("Arduino Received: ");
+            Serial3.print(inData);
+
+            inData = ""; // Clear recieved buffer
+        }
+    }
 }
 
 static void calculate_standard_deviation()
@@ -724,9 +849,12 @@ gpsdump(TinyGPS &gps)
     unsigned long age;
     gps.f_get_position(&flat, &flon, &age);
     //Serial.print("Lat/Long(float): "); 
-    flat = getFloat(flat, 5); 
+    char str_lat[13];
+    char str_lng[13];
+    
+    flat = getFloat(flat, 5,str_lat); 
     //Serial.print(", "); 
-    flon = getFloat(flon, 5);
+    flon = getFloat(flon, 5, str_lng);
     //Serial.println();
     
     //update location
@@ -736,14 +864,14 @@ gpsdump(TinyGPS &gps)
 }
 
 static float 
-getFloat(double number, int digits)
+getFloat(double number, int digits,char * str)
 {
     int char_count = 0;
-    char str[13];
+    //char str[13];
     // Handle negative numbers
     if (number < 0.0) 
     {
-        Serial.print('-');
+        //Serial.print('-');
         number = -number;
         char_count+=1;
         str[0] = '-';
@@ -770,11 +898,11 @@ getFloat(double number, int digits)
         i+=1;
         char_count+=1;
     }
-    Serial.print(int_part);
+    //Serial.print(int_part);
 
     // Print the decimal point, but only if there are digits beyond
     if (digits > 0){
-        Serial3.print(".");
+      //  Serial3.print(".");
         str[char_count] = '.';
         char_count+=1;
     }  
@@ -786,13 +914,14 @@ getFloat(double number, int digits)
         int toPrint = int(remainder);
         char snum[2];
         itoa(toPrint, snum, 10);
-        Serial.print(toPrint);
+        //Serial.print(toPrint);
         str[char_count] = snum[0];
         char_count+=1;
         remainder -= toPrint;
     }
     str[char_count] = 0;
     float temp = atof(str);
+    return temp;
 }
 
 
@@ -935,24 +1064,7 @@ flight_mission(void)
 
 }
 
-static void get_naze_data()
-{
-    String inData;
-    while (Serial.available() > 0)
-    {
-        char recieved = Serial.read();
-        inData += recieved; 
 
-        // Process message when new line character is recieved
-        if (recieved == '\n')
-        {
-            Serial3.print("Arduino Received: ");
-            Serial3.print(inData);
-
-            inData = ""; // Clear recieved buffer
-        }
-    }
-}
 
 static void populate_waypoints()
 {
