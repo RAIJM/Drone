@@ -16,6 +16,7 @@
 #include "utils.h"
 #include "MSP.h"
 #include "KalmanFilter.h"
+#include "MS5611.h"
 //#include <MemoryFree.h>
 
 
@@ -107,7 +108,7 @@ int current_pitch=1500;
 int current_roll=1500;
 int current_yaw=1500;
 
-
+    
 int next_state_timer=0;
 
 int time_of_last_execution;
@@ -153,7 +154,7 @@ float vehicle_weight = 0.84;
 int u0 = 1000; // Zero throttle command
 int uh = 1700; // Hover throttle command
 float kt = vehicle_weight * g / (uh-u0);
-float desired_height;
+float desired_height = 1.0; //in meters
 
 float time_of_last_throttle_pid_update=0;
 
@@ -217,6 +218,10 @@ float time_to_fly; //timer for starting navigation mission
 HMC5883L_Simple Compass; //magnometer used for heading
 
 
+MS5611 ms5611; //pressure sensor for altitude
+double referencePressure; //pressure on ground
+
+
 
 
 
@@ -234,6 +239,8 @@ char buf[24];
 
 float check_failsafe = true;
 float check_timer;
+
+float time_to_send; //timer for bluetooth telemetry transmission
 
 
 
@@ -301,6 +308,8 @@ static void failsafe();
 static void get_bluetooth_data();
 static void update_pid_values(String inData);
 String getValue(String data, char separator, int index);
+static void checkSettings();
+
 
 
 
@@ -312,6 +321,7 @@ String getValue(String data, char separator, int index);
 void
 setup(void)
 {
+
     set_up_servos(); //used to set up pwm pins for naze32
     set_up_pids(); //set up pid controllers for roll,pitch,throttle,yaw
     set_up_filters(); //set up low pass filters for pitch,roll,yaw
@@ -335,7 +345,24 @@ setup(void)
     
     delay(1000);
 
+    //Pressure senor set up
+    Serial.println("Initialize MS5611 Sensor");
+
+    while(!ms5611.begin())
+    {
+        Serial.println("Could not find a valid MS5611 sensor, check wiring!");
+        delay(500);
+    }
+    
+    //Get reference pressure for relative altitude
+    referencePressure = ms5611.readPressure();
+    
+    //Check settings
+    checkSettings();
+
+
     //setting up gps
+
     gpsSerial.begin(9600);
     Serial.println("uBlox Neo 6M");
     Serial.print("Testing TinyGPS library v. "); Serial.println(TinyGPS::library_version());
@@ -346,6 +373,7 @@ setup(void)
     Serial.println(); 
     
     time_to_fly = millis();
+    time_to_send = millis();
 
 
 
@@ -378,23 +406,20 @@ setup(void)
 void
 loop(void)
 {
-
-    get_heading();
+   
     if(!armed) //if drone is not armed
     {
-        
         if(aux2_chan>=1200) //arm command
         {
-        
             apply_aux2(1000);
             apply_aux1(1000);
             apply_throttle(885); //throttle needs to be at this value for drone to be armed
             arm(); //arm the drone
         }
-   
+ 
     }else{
 
-        failsafe(); //if communication is lost to reciever switch to manual and set throttle to minimum to land
+        //failsafe(); //if communication is lost to reciever switch to manual and set throttle to minimum to land
 
         if(manual)  //if drone is in the manual
         {
@@ -403,7 +428,7 @@ loop(void)
             apply_yaw(yaw_chan);
             apply_roll(roll_chan);
             apply_pitch(pitch_chan);
-            //Serial.println("Im here");
+            //Serial.println("Manual");
             //reset_pids(); //used to reset pid controller 
 
         }else{ //if drone is in automatic
@@ -412,105 +437,114 @@ loop(void)
             apply_pitch(current_pitch);
             apply_yaw(current_yaw);
             apply_roll(current_roll);
+          
+            stabilize_height();
+          //Serial.println("Automatic");
 
-            update_gps_reading(); //update gps location
+//            update_gps_reading(); //update gps location
+//
+//            //update sensor values from naze
+//            update_altitude(); //barometer
+//            update_attitude(); //update yaw,pitch,roll vector
+//            //update_imu(); //accel,gyro
+//
+//            if(gpsFix) //when we have a gps fix
+//            {
+//                if(!ready_to_fly)
+//                {
+//                    if(drone_altitude.estimatedActualPosition != 0) //if drone has altitude
+//                    {
+//
+//                        //get home position
+//                        startPos.lat = current_location.lat;
+//                        startPos.lng = current_location.lng;
+//
+//                        float sum_height = 0;
+//                        float avg_height = 0;
+//                        for(int i=0; i < 100; i++)
+//                        {
+//                            update_altitude();
+//                            sum_height += drone_altitude.estimatedActualPosition;
+//                        }
+//
+//                        avg_height = sum_height / 100.0; //average the recorded altitiude
+//                        start_altitude = avg_height;
+//                    
+//                        ready_to_fly = true;
+//                        time_to_fly = millis();
+//                        desired_height = avg_height + HEIGHT; //set desired height from reference point
+//                    }
+//                }
+//            }
+//
+//            if(ready_to_fly)
+//            {
+//
+//                //used to maintain a certain height
+//                if(!mission_done)
+//                    stabilize_height();
+//
+//                if(millis() - time_to_fly > 3000) //after 3 seconds start mission
+//                {
+//                    at_height = true;
+//                }
+//
+//                if(at_height)
+//                {
+//                    if(!mission_done)
+//                    {
+//                       
+//                        //Serial3.println("Im flying");
+//                        flight_mission(); //start navigation mission
+//                    }
+//                }
+//            }
+       }
+   }
 
-            //update sensor values from naze
-            update_altitude(); //barometer
-            update_attitude(); //update yaw,pitch,roll vector
-            //update_imu(); //accel,gyro
+   if(armed && aux2_chan <= 1200)
+   {
+     
+       disarm(); //disarm if aux2 is set to 1000
+   }
 
-            if(gpsFix) //when we have a gps fix
-            {
-                if(!ready_to_fly)
-                {
-                    if(drone_altitude.estimatedActualPosition != 0) //if drone has altitude
-                    {
+   if(aux1_chan<=1200) //used to set to manual control
+   {
+       manual = true;
+   }else if(aux1_chan>=1700){ 
+       manual = false;
+   }
 
-                        //get home position
-                        startPos.lat = current_location.lat;
-                        startPos.lng = current_location.lng;
 
-                        float sum_height = 0;
-                        float avg_height = 0;
-                        for(int i=0; i < 100; i++)
-                        {
-                            update_altitude();
-                            sum_height += drone_altitude.estimatedActualPosition;
-                        }
-
-                        avg_height = sum_height / 100.0; //average the recorded altitiude
-                        start_altitude = avg_height;
-                    
-                        ready_to_fly = true;
-                        time_to_fly = millis();
-                        desired_height = avg_height + HEIGHT; //set desired height from reference point
-                    }
-                }
-            }
-
-            if(ready_to_fly)
-            {
-
-                //used to maintain a certain height
-                if(!mission_done)
-                    stabilize_height();
-
-                if(millis() - time_to_fly > 3000) //after 3 seconds start mission
-                {
-                    at_height = true;
-                }
-
-                if(at_height)
-                {
-                    if(!mission_done)
-                    {
-                       
-                        //Serial3.println("Im flying");
-                        flight_mission(); //start navigation mission
-                    }
-                }
-            }
-        }
-    }
-
-    if(armed && aux2_chan <= 1200)
-    {
-       
-        disarm(); //disarm if aux2 is set to 1000
-    }
-
-    if(aux1_chan<=1200) //used to set to manual control
-    {
-        manual = true;
-    }else if(aux1_chan>=1700){ 
-        manual = false;
-    }
-//  
-    send_bluetooth_data();
-    get_bluetooth_data();
-
-//    Serial.print(throttle_kp);
-//    Serial.print(" ");
-//    Serial.print(throttle_kd);
-//    Serial.print(" ");
-//    Serial.print(throttle_ki);
-//    Serial.print(" ");
-//    Serial.print(pitch_kp);
-//    Serial.print(" ");
-//    Serial.print(pitch_kd);
-//    Serial.print(" ");
-//    Serial.print(pitch_ki);
-//    Serial.print(" ");
-//    Serial.print(roll_kp);
-//    Serial.print(" ");
-//    Serial.print(roll_kd);
-//    Serial.print(" ");
-//    Serial.print(roll_ki);
-    Serial.println();
-    
-//    Serial.println("hello");
+  if(millis() - time_to_send > 500)
+  {
+      send_bluetooth_data();
+      time_to_send = millis();
+  }
+        
+////    get_bluetooth_data();
+//
+////    Serial.print(throttle_kp);
+////    Serial.print(" ");
+////    Serial.print(throttle_kd);
+////    Serial.print(" ");
+////    Serial.print(throttle_ki);
+////    Serial.print(" ");
+////    Serial.print(pitch_kp);
+////    Serial.print(" ");
+////    Serial.print(pitch_kd);
+////    Serial.print(" ");
+////    Serial.print(pitch_ki);
+////    Serial.print(" ");
+////    Serial.print(roll_kp);
+////    Serial.print(" ");
+////    Serial.print(roll_kd);
+////    Serial.print(" ");
+////    Serial.print(roll_ki);
+//    Serial.println();
 //    
+////    Serial.println("hello");
+////    
 //     Serial.print("Throttle ");
 //     Serial.print(throttle_chan);
 //     Serial.print("Pitch ");
@@ -526,6 +560,14 @@ loop(void)
 
     
 }
+
+static void checkSettings()
+{
+    Serial.print("Oversampling: ");
+    Serial.println(ms5611.getOversampling());
+}
+
+
 
 
 static void failsafe()
@@ -574,7 +616,8 @@ static void send_bluetooth_data()
     int roll;
     int yaw;
     
-    float height = (drone_altitude.estimatedActualPosition - start_altitude)/100.0;
+    
+    float height = get_height();
 
     char str_lat[13];
     char str_lng[13]; 
@@ -594,8 +637,7 @@ static void send_bluetooth_data()
         roll = current_roll;
         yaw = current_yaw;
     }
-    /*sprintf(buf,"%d \n",drone_attitude.pitch,drone_attitude.roll,drone_attitude.yaw,throttle,roll,
-                                pitch,yaw,drone_altitude.estimatedActualPosition);*/
+    
     String s = "";
     s += drone_attitude.pitch;
     s += " ";
@@ -771,7 +813,7 @@ reset_pids()
 }
 
 
-
+//gets the compass heading from magnetometer
 static int 
 get_heading()
 {
@@ -791,6 +833,16 @@ get_heading()
     drone_heading = heading;
 
     return heading;
+}
+
+//gets the altitude from pressre sensor
+static float
+get_height()
+{
+    long realPressure = ms5611.readPressure();
+    float relativeAltitude = ms5611.getAltitude(realPressure, referencePressure);
+
+    return relativeAltitude; //in meters
 }
 
 
@@ -820,15 +872,17 @@ update_gps_reading()
     {
         char c = gpsSerial.read();
         Serial.print(c);
+
+        //Serial.print(gps.satellites());
         if (gps.encode(c)) //if we got a fix
         {
             newdata = true;
             break;
         }
 
-        if(millis() - start > 5) //timeout of 5 millis
+        if(millis() - start > 5) //timeout to prevent gps from stalling loop
         {
-           // Serial.print("Timeout");
+            // Serial.print("Timeout");
             break;
         } 
     }
@@ -852,17 +906,22 @@ gpsdump(TinyGPS &gps)
     char str_lat[13];
     char str_lng[13];
     
-    flat = getFloat(flat, 5,str_lat); 
+    flat = getFloat(flat, 5,str_lat);  //latitude
     //Serial.print(", "); 
-    flon = getFloat(flon, 5, str_lng);
+    flon = getFloat(flon, 5, str_lng); //longitude
     //Serial.println();
     
     //update location
     current_location.lat = flat;
     current_location.lng = flon;
+
+    float alt = gps.f_altitude();
+    Serial.print("Altitude: ");
+    Serial.print(alt);
     
 }
 
+//takes a float and number of decimal places and returns float rounded of n decimal places
 static float 
 getFloat(double number, int digits,char * str)
 {
@@ -1189,9 +1248,11 @@ stabilize_height(void)
 {
 
   
-    float distance = filter_alt->update(drone_altitude.estimatedActualPosition/100.0); //current distance from reference point
-    float error = (desired_height/100.0 - distance); //difference between target height and current height
-
+    //float distance = filter_alt->update(drone_altitude.estimatedActualPosition/100.0); //current distance from reference point
+    float distance = filter_alt->update(get_height());
+    float error = desired_height - distance;
+    //float error = desired_height - (distance/100.0);
+    //float error = (desired_height/100.0 - distance); //difference between target height and current height
     
     float throttlePIDVal = throttlePID->updatePID(error); //update pid controller for throttle
     
@@ -1691,6 +1752,14 @@ update_attitude()
         int16_t pitch = att.pitch;
         int16_t yaw = att.yaw;
         drone_attitude = att;
+        Serial.print("Roll: ");
+        Serial.print(roll);
+        Serial.print("Pitch: ");
+        Serial.print(pitch);
+        Serial.print("Yaw: ");
+        Serial.print(yaw);
+        Serial.println();
+        
         //Serial3.println("Hello");
       }
    
