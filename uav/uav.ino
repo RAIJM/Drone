@@ -234,7 +234,7 @@ void resetPIDs();
 void updatePIDValues(String inData);
 void calculateStandardDeviation();
 String getValue(String data, char separator, int index);
-void sbusPreparePacket(uint8_t packet[], int channels[], bool isSignalLoss, bool isFailsafe)
+void sbusPreparePacket(uint8_t packet[], int channels[], bool isSignalLoss, bool isFailsafe);
 
 
 
@@ -675,10 +675,7 @@ void setRoll(int val)
   rcChannels[0] = val;
 }
 
-void setThrottle(int val)
-{
-  rcChannels[3] = val;
-}
+
 
 
 void arm()
