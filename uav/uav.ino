@@ -15,6 +15,20 @@
 
 
 #define model 20150
+#define RC_CHANNEL_MIN 990
+#define RC_CHANNEL_MAX 2010
+
+#define SBUS_MIN_OFFSET 173
+#define SBUS_MID_OFFSET 992
+#define SBUS_MAX_OFFSET 1811
+#define SBUS_CHANNEL_NUMBER 16
+#define SBUS_PACKET_LENGTH 25
+#define SBUS_FRAME_HEADER 0x0f
+#define SBUS_FRAME_FOOTER 0x00
+#define SBUS_FRAME_FOOTER_V2 0x04
+#define SBUS_STATE_FAILSAFE 0x08
+#define SBUS_STATE_SIGNALLOSS 0x04
+#define SBUS_UPDATE_RATE 4 //ms
 
 
 
@@ -184,6 +198,10 @@ float check_timer;
 
 float time_to_send; //timer for bluetooth telemetry transmission
 
+uint8_t sbusPacket[SBUS_PACKET_LENGTH];
+int rcChannels[SBUS_CHANNEL_NUMBER];
+uint32_t sbusTime = 0;
+
 
 void mainControl();
 void autoPilot();
@@ -216,16 +234,17 @@ void resetPIDs();
 void updatePIDValues(String inData);
 void calculateStandardDeviation();
 String getValue(String data, char separator, int index);
+void sbusPreparePacket(uint8_t packet[], int channels[], bool isSignalLoss, bool isFailsafe)
 
 
 
 
-void apply_pitch(int value);
-void apply_yaw(int value);
-void apply_roll(int value);
-void apply_throttle(int value);
-void apply_aux1(int value);
-void apply_aux2(int value);
+void setPitch(int value);
+void setYaw(int value);
+void setRoll(int value);
+void setThrottle(int value);
+void setAux1(int value);
+void setAux2(int value);
 
 
 
@@ -256,6 +275,12 @@ void setup()
 
     time_to_fly = millis();
     time_to_send = millis();
+
+    for (uint8_t i = 0; i < SBUS_CHANNEL_NUMBER; i++) {
+        rcChannels[i] = 1500;
+    }
+    
+    Serial1.begin(100000, SERIAL_8E2);
 
 
 
@@ -292,13 +317,21 @@ void loop()
 
 void mainControl()
 {
+    uint32_t currentMillis = millis();
+
+    if (currentMillis > sbusTime) {
+        sbusPreparePacket(sbusPacket, rcChannels, false, false);
+        Serial1.write(sbusPacket, SBUS_PACKET_LENGTH);
+
+        sbusTime = currentMillis + SBUS_UPDATE_RATE;
+    }
+    
     if(!armed) //if drone is not armed
     {
         if(aux2_chan>=1200) //arm command
         {
-            apply_aux2(1000);
-            apply_aux1(1000);
-            apply_throttle(885); //throttle needs to be at this value for drone to be armed
+            setAux2(1000);
+            setThrottle(885); //throttle needs to be at this value for drone to be armed
             arm(); //arm the drone
         }
     
@@ -307,10 +340,10 @@ void mainControl()
         if(manual)  //if drone is in the manual
         {
            //set throttle,pitch,yaw,roll from reciever
-            apply_throttle(throttle_chan);
-            apply_yaw(yaw_chan);
-            apply_roll(roll_chan);
-            apply_pitch(pitch_chan);
+            setThrottle(throttle_chan);
+            setYaw(yaw_chan);
+            setRoll(roll_chan);
+            setPitch(pitch_chan);
 
         }else{ //if drone is in automatic
         
@@ -346,10 +379,10 @@ void mainControl()
 
 void autoPilot()
 {
-    apply_throttle(current_throttle);
-    apply_pitch(current_pitch);
-    apply_yaw(current_yaw);
-    apply_roll(current_roll);
+    setThrottle(current_throttle);
+    setPitch(current_pitch);
+    setYaw(current_yaw);
+    setRoll(current_roll);
 
     updateGpsReading();
     updateAttitude(); //update yaw,pitch,roll vector
@@ -612,17 +645,51 @@ void checkSettings()
     Serial.println(ms5611.getOversampling());
 }
 
+void setAux1(int val)
+{
+  rcChannels[4] = val;
+}
+
+void setAux2(int val)
+{
+  rcChannels[5] = val;
+}
+
+void setThrottle(int val)
+{
+  rcChannels[3] = val;
+}
+
+void setPitch(int val)
+{
+  rcChannels[1]= val;
+}
+
+void setYaw(int val)
+{
+  rcChannels[2] = val;
+}
+
+void setRoll(int val)
+{
+  rcChannels[0] = val;
+}
+
+void setThrottle(int val)
+{
+  rcChannels[3] = val;
+}
+
 
 void arm()
 {
-    apply_aux2(1800);//moves from out of range to into range
-    apply_aux1(1400);
+    setAux2(1800);//moves from out of range to into range
     armed = true;
 }
 
 void disarm()
 {
-    apply_aux2(1200);
+    setAux2(1200);
     current_throttle = 1000;
     armed = false;
 }
@@ -1041,50 +1108,6 @@ float degToRad(float deg)
     return (deg * M_PI) / 180;
 }
 
-
-
-
-
-void apply_pitch(int value)
-{
-   // pitchServo.write(value);
-    
-    // apply PWM for pitch
-}
-
-void apply_yaw(int value)
-{
-   // yawServo.write(value);
-    // apply PWM for yaw
-}
-
-void apply_roll(int value)
-{
-    //rollServo.write(value);
-    // call MSP API to apply roll to drone
-}
-
-void apply_throttle(int value)
-{
-   // throttleServo.write(value);
-    // call MSP API to apply throttle to drone
-}
-
-void apply_aux1(int value)
-{
-   // aux1Servo.write(value);
-
-}
-
-void apply_aux2(int value)
-{
-//    aux2Servo.write(value);
-
-}
-
-
-
-
 void printRecieverValues()
 {
   Serial.print("Throttle:");
@@ -1174,6 +1197,56 @@ float toFloat(double number, int digits,char * str)
     return temp;
 }
 
+
+
+void sbusPreparePacket(uint8_t packet[], int channels[], bool isSignalLoss, bool isFailsafe)
+{
+
+    static int output[SBUS_CHANNEL_NUMBER] = {0};
+
+    /*
+     * Map 1000-2000 with middle at 1500 chanel values to
+     * 173-1811 with middle at 992 S.BUS protocol requires
+     */
+    for (uint8_t i = 0; i < SBUS_CHANNEL_NUMBER; i++) {
+        output[i] = map(channels[i], RC_CHANNEL_MIN, RC_CHANNEL_MAX, SBUS_MIN_OFFSET, SBUS_MAX_OFFSET);
+    }
+
+    uint8_t stateByte = 0x00;
+    if (isSignalLoss) {
+        stateByte |= SBUS_STATE_SIGNALLOSS;
+    }
+    if (isFailsafe) {
+        stateByte |= SBUS_STATE_FAILSAFE;
+    }
+    packet[0] = SBUS_FRAME_HEADER; //Header
+
+    packet[1] = (uint8_t) (output[0] & 0x07FF);
+    packet[2] = (uint8_t) ((output[0] & 0x07FF)>>8 | (output[1] & 0x07FF)<<3);
+    packet[3] = (uint8_t) ((output[1] & 0x07FF)>>5 | (output[2] & 0x07FF)<<6);
+    packet[4] = (uint8_t) ((output[2] & 0x07FF)>>2);
+    packet[5] = (uint8_t) ((output[2] & 0x07FF)>>10 | (output[3] & 0x07FF)<<1);
+    packet[6] = (uint8_t) ((output[3] & 0x07FF)>>7 | (output[4] & 0x07FF)<<4);
+    packet[7] = (uint8_t) ((output[4] & 0x07FF)>>4 | (output[5] & 0x07FF)<<7);
+    packet[8] = (uint8_t) ((output[5] & 0x07FF)>>1);
+    packet[9] = (uint8_t) ((output[5] & 0x07FF)>>9 | (output[6] & 0x07FF)<<2);
+    packet[10] = (uint8_t) ((output[6] & 0x07FF)>>6 | (output[7] & 0x07FF)<<5);
+    packet[11] = (uint8_t) ((output[7] & 0x07FF)>>3);
+    packet[12] = (uint8_t) ((output[8] & 0x07FF));
+    packet[13] = (uint8_t) ((output[8] & 0x07FF)>>8 | (output[9] & 0x07FF)<<3);
+    packet[14] = (uint8_t) ((output[9] & 0x07FF)>>5 | (output[10] & 0x07FF)<<6);  
+    packet[15] = (uint8_t) ((output[10] & 0x07FF)>>2);
+    packet[16] = (uint8_t) ((output[10] & 0x07FF)>>10 | (output[11] & 0x07FF)<<1);
+    packet[17] = (uint8_t) ((output[11] & 0x07FF)>>7 | (output[12] & 0x07FF)<<4);
+    packet[18] = (uint8_t) ((output[12] & 0x07FF)>>4 | (output[13] & 0x07FF)<<7);
+    packet[19] = (uint8_t) ((output[13] & 0x07FF)>>1);
+    packet[20] = (uint8_t) ((output[13] & 0x07FF)>>9 | (output[14] & 0x07FF)<<2);
+    packet[21] = (uint8_t) ((output[14] & 0x07FF)>>6 | (output[15] & 0x07FF)<<5);
+    packet[22] = (uint8_t) ((output[15] & 0x07FF)>>3);
+
+    packet[23] = stateByte; //Flags byte
+    packet[24] = SBUS_FRAME_FOOTER; //Footer
+}
 
 
 
