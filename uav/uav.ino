@@ -4,6 +4,8 @@
 #include <HMC5883L_Simple.h>
 //#include <TinyGPS.h>
 #include <Wire.h>
+#include <TinyGPS++.h>
+//#include <SoftwareSerial.h>
 #include "SharpIR.h"
 #include <stddef.h>
 #include "PID.h"
@@ -32,6 +34,10 @@
 
 
 
+#define gpsSerial Serial2
+
+
+
 
 byte last_channel_1;
 byte last_channel_2;
@@ -43,7 +49,7 @@ byte last_channel_6;
 
 #define HEIGHT 300 //height above ground in cm
 
-#define gpsSerial Serial1
+//#define gpsSerial Serial1
 
 
 
@@ -134,6 +140,13 @@ float time_of_last_throttle_pid_update=0;
 
 
 SharpIR SharpIR(A0, model); //ir sensor
+
+static const int RXPin = 4, TXPin = 3;
+static const uint32_t GPSBaud = 9600;
+
+// The TinyGPS++ object
+TinyGPSPlus gps;
+
 
 
 PID * throttlePID; //pid controller for throttle
@@ -267,11 +280,13 @@ void setup()
     
     Serial.begin(9600);
     
-    setUpCompass();
+    //setUpCompass();
 
 //    delay(1000);
 
-    setUpPressureSensor();
+    //setUpPressureSensor();
+
+    setUpGPS();
 
     time_to_fly = millis();
     time_to_send = millis();
@@ -309,8 +324,8 @@ void setup()
 
 void loop()
 {
-    
-    mainControl();   
+    updateGpsReading();
+    //mainControl();   
 }
 
 
@@ -384,45 +399,45 @@ void autoPilot()
     setYaw(current_yaw);
     setRoll(current_roll);
 
-    updateGpsReading();
-    updateAttitude(); //update yaw,pitch,roll vector
-    updateIMU(); //accel,gyro
-
-    if (gpsFix) //when we have a gps fix
-    {
-        if(!ready_to_fly)
-        {
-            startPos.lat = current_location.lat;
-            startPos.lng = current_location.lng;
-
-            ready_to_fly = true;
-            time_to_fly = millis();
-
-        }
-
-    }
-
-    if(ready_to_fly)
-    {
-        if (!mission_done) 
-        {
-             stabilizeHeight();
-        }
-
-        if(millis() - time_to_fly > 3000) //after 3 seconds start mission
-        {
-            at_height = true;
-        }
-
-        if(at_height)
-        {
-            if(!mission_done)
-            {
-                flightMission(); //start navigation mission
-            }
-        }
-       
-    }
+//    updateGpsReading();
+//    updateAttitude(); //update yaw,pitch,roll vector
+//    updateIMU(); //accel,gyro
+//
+//    if (gpsFix) //when we have a gps fix
+//    {
+//        if(!ready_to_fly)
+//        {
+//            startPos.lat = current_location.lat;
+//            startPos.lng = current_location.lng;
+//
+//            ready_to_fly = true;
+//            time_to_fly = millis();
+//
+//        }
+//
+//    }
+//
+//    if(ready_to_fly)
+//    {
+//        if (!mission_done) 
+//        {
+//             stabilizeHeight();
+//        }
+//
+//        if(millis() - time_to_fly > 3000) //after 3 seconds start mission
+//        {
+//            at_height = true;
+//        }
+//
+//        if(at_height)
+//        {
+//            if(!mission_done)
+//            {
+//                flightMission(); //start navigation mission
+//            }
+//        }
+//       
+//    }
 }
 
 
@@ -635,14 +650,20 @@ void setUpPressureSensor()
     referencePressure = ms5611.readPressure();
    
     //Check settings
-    checkSettings();
+    Serial.print("Oversampling: ");
+    Serial.println(ms5611.getOversampling());
 
 }
 
-void checkSettings()
+void setUpGPS()
 {
-    Serial.print("Oversampling: ");
-    Serial.println(ms5611.getOversampling());
+  gpsSerial.begin(GPSBaud);
+
+  Serial.println(F("DeviceExample.ino"));
+  Serial.println(F("A simple demonstration of TinyGPS++ with an attached GPS module"));
+  Serial.print(F("Testing TinyGPS++ library v. ")); Serial.println(TinyGPSPlus::libraryVersion());
+  Serial.println(F("by Mikal Hart"));
+  Serial.println();
 }
 
 void setAux1(int val)
@@ -814,63 +835,122 @@ int getHeading()
 void updateGpsReading()
 {
     
-//    bool newdata = false;
-//    unsigned long start = millis();
-//    while (gpsSerial.available()) 
-//    {
-//        char c = gpsSerial.read();
-//        Serial.print(c);
-//
-//        //Serial.print(gps.satellites());
-//        if (gps.encode(c)) //if we got a fix
-//        {
-//            newdata = true;
-//            break;
-//        }
-//
-//        if(millis() - start > 5) //timeout to prevent gps from stalling loop
-//        {
-//            // Serial.print("Timeout");
-//            break;
-//        } 
-//    }
-//
-//    if(newdata)
-//    {
-//        
-//        gpsFix = true;
-//        gpsdump(gps); //update current location of drone
-//       
-//    }
+    bool newdata = false;
+    unsigned long start = millis();
+    while (gpsSerial.available()) 
+    {
+        char c = gpsSerial.read();
+        Serial.print(c);
+
+        //Serial.print(gps.satellites());
+        if (gps.encode(c)) //if we got a fix
+        {
+            newdata = true;
+            //checkGpsInfo();
+            break;
+        }
+
+        if(millis() - start > 5) //timeout to prevent gps from stalling loop
+        {
+            // Serial.print("Timeout");
+            break;
+        } 
+    }
+
+    if(newdata)
+    {
+        Serial.print("Hello");
+        checkGpsInfo();
+       
+    }
 }
 
-//static void 
-//gpsdump(TinyGPS &gps)
-//{
-//    float flat, flon;
-//    unsigned long age;
-//    gps.f_get_position(&flat, &flon, &age);
-//    //Serial.print("Lat/Long(float): "); 
-//    char str_lat[13];
-//    char str_lng[13];
-//    
-//    flat = toFloat(flat, 5,str_lat);  //latitude
-//    //Serial.print(", "); 
-//    flon = toFloat(flon, 5, str_lng); //longitude
-//    //Serial.println();
-//    
-//    //update location
-//    current_location.lat = flat;
-//    current_location.lng = flon;
-//
-//    float alt = gps.f_altitude();
-//    Serial.print("Altitude: ");
-//    Serial.print(alt);
-//    
-//}
+void checkGpsInfo()
+{
+  if (gps.location.isValid())
+  {
+    gpsFix = true;
+    Serial.print(gps.location.lat(), 6);
+    Serial.print(F(","));
+    Serial.print(gps.location.lng(), 6);
+
+    char str_lat[13];
+    char str_lon[13];
+
+    float flat = toFloat(flat, 5,str_lat);
+    float flon = toFloat(flon, 5, str_lon); //longitude
+
+    current_location.lat = flat;
+    current_location.lng = flon;
+    
+  }
+  else
+  {
+    gpsFix = false;
+  }
+}
+
 
 //takes a float and number of decimal places and returns float rounded of n decimal places
+float toFloat(double number, int digits,char * str)
+{
+    int char_count = 0;
+    //char str[13];
+    // Handle negative numbers
+    if (number < 0.0) 
+    {
+        //Serial.print('-');
+        number = -number;
+        char_count+=1;
+        str[0] = '-';
+    }
 
+    // Round correctly so that print(1.999, 2) prints as "2.00"
+    double rounding = 0.5;
+    for (uint8_t i=0; i<digits; ++i)
+        rounding /= 10.0;
+  
+    number += rounding;
+
+    // Extract the integer part of the number and print it
+    unsigned long int_part = (unsigned long)number;
+    double remainder = number - (double)int_part;
+
+    char snum[5];
+    // convert 123 to string [buf]
+    itoa(int_part, snum, 10);
+    int i = 0;
+    while(snum[i] != 0)
+    {
+        str[char_count] = snum[i];
+        i+=1;
+        char_count+=1;
+    }
+    //Serial.print(int_part);
+
+    // Print the decimal point, but only if there are digits beyond
+    if (digits > 0){
+      //  Serial3.print(".");
+        str[char_count] = '.';
+        char_count+=1;
+    }  
+
+    // Extract digits from the remainder one at a time
+    while (digits-- > 0) 
+    {
+        remainder *= 10.0;
+        int toPrint = int(remainder);
+        char snum[2];
+        itoa(toPrint, snum, 10);
+        //Serial.print(toPrint);
+        str[char_count] = snum[0];
+        char_count+=1;
+        remainder -= toPrint;
+    }
+    str[char_count] = 0;
+    float temp = atof(str);
+    return temp;
+}
 
 
 
@@ -1134,65 +1214,7 @@ void printRecieverValues()
 
 
 
-float toFloat(double number, int digits,char * str)
-{
-    int char_count = 0;
-    //char str[13];
-    // Handle negative numbers
-    if (number < 0.0) 
-    {
-        //Serial.print('-');
-        number = -number;
-        char_count+=1;
-        str[0] = '-';
-    }
 
-    // Round correctly so that print(1.999, 2) prints as "2.00"
-    double rounding = 0.5;
-    for (uint8_t i=0; i<digits; ++i)
-        rounding /= 10.0;
-  
-    number += rounding;
-
-    // Extract the integer part of the number and print it
-    unsigned long int_part = (unsigned long)number;
-    double remainder = number - (double)int_part;
-
-    char snum[5];
-    // convert 123 to string [buf]
-    itoa(int_part, snum, 10);
-    int i = 0;
-    while(snum[i] != 0)
-    {
-        str[char_count] = snum[i];
-        i+=1;
-        char_count+=1;
-    }
-    //Serial.print(int_part);
-
-    // Print the decimal point, but only if there are digits beyond
-    if (digits > 0){
-      //  Serial3.print(".");
-        str[char_count] = '.';
-        char_count+=1;
-    }  
-
-    // Extract digits from the remainder one at a time
-    while (digits-- > 0) 
-    {
-        remainder *= 10.0;
-        int toPrint = int(remainder);
-        char snum[2];
-        itoa(toPrint, snum, 10);
-        //Serial.print(toPrint);
-        str[char_count] = snum[0];
-        char_count+=1;
-        remainder -= toPrint;
-    }
-    str[char_count] = 0;
-    float temp = atof(str);
-    return temp;
-}
 
 
 
