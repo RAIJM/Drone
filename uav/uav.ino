@@ -248,6 +248,7 @@ void updatePIDValues(String inData);
 void calculateStandardDeviation();
 String getValue(String data, char separator, int index);
 void sbusPreparePacket(uint8_t packet[], int channels[], bool isSignalLoss, bool isFailsafe);
+void sendCmd();
 
 
 
@@ -258,14 +259,6 @@ void setRoll(int value);
 void setThrottle(int value);
 void setAux1(int value);
 void setAux2(int value);
-
-
-
-
-
-//static void gpsdump(TinyGPS &gps);
-
-
 
 
 
@@ -324,22 +317,19 @@ void setup()
 
 void loop()
 {
-    updateGpsReading();
-    //mainControl();   
+    mainControl();
+    //Serial.println(throttle_chan);
+    //printRecieverValues();
+    //updateGpsReading();
+       
 }
 
 
 
 void mainControl()
 {
-    uint32_t currentMillis = millis();
-
-    if (currentMillis > sbusTime) {
-        sbusPreparePacket(sbusPacket, rcChannels, false, false);
-        Serial1.write(sbusPacket, SBUS_PACKET_LENGTH);
-
-        sbusTime = currentMillis + SBUS_UPDATE_RATE;
-    }
+    
+    sendCmd(); //send control values to flight controller(pitch,roll,yaw,throttle)
     
     if(!armed) //if drone is not armed
     {
@@ -390,6 +380,18 @@ void mainControl()
     // getBluetoothData();
 
         
+}
+
+void sendCmd()
+{
+    uint32_t currentMillis = millis();
+
+    if (currentMillis > sbusTime) {
+        sbusPreparePacket(sbusPacket, rcChannels, false, false);
+        Serial1.write(sbusPacket, SBUS_PACKET_LENGTH);
+
+        sbusTime = currentMillis + SBUS_UPDATE_RATE;
+    }
 }
 
 void autoPilot()
@@ -678,7 +680,7 @@ void setAux2(int val)
 
 void setThrottle(int val)
 {
-  rcChannels[3] = val;
+  rcChannels[2] = val;
 }
 
 void setPitch(int val)
@@ -688,7 +690,7 @@ void setPitch(int val)
 
 void setYaw(int val)
 {
-  rcChannels[2] = val;
+  rcChannels[3] = val;
 }
 
 void setRoll(int val)
@@ -867,27 +869,26 @@ void updateGpsReading()
 
 void checkGpsInfo()
 {
-  if (gps.location.isValid())
-  {
-    gpsFix = true;
-    Serial.print(gps.location.lat(), 6);
-    Serial.print(F(","));
-    Serial.print(gps.location.lng(), 6);
+    if (gps.location.isValid())
+    {
+        gpsFix = true;
+        Serial.print(gps.location.lat(), 6);
+        Serial.print(F(","));
+        Serial.print(gps.location.lng(), 6);
 
-    char str_lat[13];
-    char str_lon[13];
+        char str_lat[13];
+        char str_lon[13];
 
-    float flat = toFloat(flat, 5,str_lat);
-    float flon = toFloat(flon, 5, str_lon); //longitude
+        float flat = toFloat(flat, 5,str_lat);
+        float flon = toFloat(flon, 5, str_lon); //longitude
 
-    current_location.lat = flat;
-    current_location.lng = flon;
+        current_location.lat = flat;
+        current_location.lng = flon;
     
-  }
-  else
-  {
-    gpsFix = false;
-  }
+    }else{
+
+        gpsFix = false;
+    }
 }
 
 
@@ -951,9 +952,6 @@ float toFloat(double number, int digits,char * str)
     float temp = atof(str);
     return temp;
 }
-
-
-
 
 
 
@@ -1210,14 +1208,6 @@ void printRecieverValues()
 
 
 
-
-
-
-
-
-
-
-
 void sbusPreparePacket(uint8_t packet[], int channels[], bool isSignalLoss, bool isFailsafe)
 {
 
@@ -1266,13 +1256,6 @@ void sbusPreparePacket(uint8_t packet[], int channels[], bool isSignalLoss, bool
     packet[23] = stateByte; //Flags byte
     packet[24] = SBUS_FRAME_FOOTER; //Footer
 }
-
-
-
-
-
-
-
 
 
 
