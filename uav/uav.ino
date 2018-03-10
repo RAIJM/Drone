@@ -5,7 +5,6 @@
 //#include <TinyGPS.h>
 #include <Wire.h>
 #include <TinyGPS++.h>
-//#include <SoftwareSerial.h>
 #include "SharpIR.h"
 #include <stddef.h>
 #include "PID.h"
@@ -177,6 +176,7 @@ low_pass* filter_yaw; //low pass filter for yaw
 low_pass* filter_pitch; //low pass filter for pitch
 low_pass* filter_roll; //low pass filter for roll
 low_pass * filter_alt; //low pass filter for altitude(barometer)
+low_pass * filter_new;
 
 KalmanFilter * state_x_kalman_filter; //kalman filter for x-axis(roll)
 KalmanFilter * state_y_kalman_filter; //kalman filter for y-axis(pitch)
@@ -243,6 +243,7 @@ float toFloat(double number, int digits,char * str);
 bool updateAttitude();
 void updateGpsReading();
 bool updateIMU();
+bool updateDroneAlt();
 void resetPIDs();
 void updatePIDValues(String inData);
 void calculateStandardDeviation();
@@ -259,6 +260,11 @@ void setRoll(int value);
 void setThrottle(int value);
 void setAux1(int value);
 void setAux2(int value);
+
+float start_alt;
+
+
+
 
 
 
@@ -277,7 +283,7 @@ void setup()
 
 //    delay(1000);
 
-    //setUpPressureSensor();
+    setUpPressureSensor();
 
     setUpGPS();
 
@@ -296,9 +302,11 @@ void setup()
      
 //    Serial3.begin(38400); //bluetooth serial
 //    
-//    Serial2.begin(115200); //serial for flight controller
-//    msp.begin(Serial2);
+    Serial2.begin(115200); //serial for flight controller
+    msp.begin(Serial2);
 
+    updateDroneAlt();
+    start_alt = drone_altitude.estimatedActualPosition;
  
    
     
@@ -317,10 +325,19 @@ void setup()
 
 void loop()
 {
-    mainControl();
+    //mainControl();
     //Serial.println(throttle_chan);
     //printRecieverValues();
     //updateGpsReading();
+    //updateIMU();
+    updateDroneAlt();
+    //Serial.println(drone_altitude.estimatedActualPosition);
+    //Serial.println(filter_alt->update(getAltitude()));
+    Serial.print("ms5611 ");
+    Serial.print(filter_new->update(getAltitude()));
+    Serial.print("bpm280 ");
+    Serial.println(filter_alt->update((start_alt - drone_altitude.estimatedActualPosition)/10));
+    
        
 }
 
@@ -345,6 +362,7 @@ void mainControl()
         if(manual)  //if drone is in the manual
         {
            //set throttle,pitch,yaw,roll from reciever
+            Serial.print("manual");
             setThrottle(throttle_chan);
             setYaw(yaw_chan);
             setRoll(roll_chan);
@@ -605,6 +623,7 @@ void setUpFilters()
     filter_roll = new low_pass(20,0.01);
     filter_pitch = new low_pass(20,0.01);
     filter_alt = new low_pass(20,0.01);
+    filter_new = new low_pass(20, 0.01);
 
     state_x_kalman_filter = new KalmanFilter(0.0f, 0.0f, pos_stddev, accx_stddev);
     state_y_kalman_filter = new KalmanFilter(0.0f, 0.0f, pos_stddev , accy_stddev);
@@ -747,8 +766,7 @@ float getAltitude()
     return relativeAltitude; //in meters
 }
 
-static bool
-updateAttitude()
+bool updateAttitude()
 {
       msp_attitude_t att;
       if (msp.request(MSP_ATTITUDE, &att, sizeof(att))) {
@@ -762,8 +780,7 @@ updateAttitude()
 }
 
 
-static bool
-updateIMU()
+bool updateIMU()
 {
     msp_raw_imu_t imu;
     if (msp.request(MSP_RAW_IMU, &imu, sizeof(imu))) {
@@ -773,6 +790,18 @@ updateIMU()
     }else{
         return false;
     }
+}
+
+bool updateDroneAlt()
+{
+  msp_altitude_t alt;
+  if (msp.request(MSP_ALTITUDE, &alt, sizeof(alt))) {
+    drone_altitude.estimatedActualPosition = alt.estimatedActualPosition;
+    return true;
+  }else{
+        return false;
+  }
+  
 }
 
 
