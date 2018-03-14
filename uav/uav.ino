@@ -422,45 +422,45 @@ void autoPilot()
     setYaw(current_yaw);
     setRoll(current_roll);
 
-//    updateGpsReading();
-//    updateAttitude(); //update yaw,pitch,roll vector
-//    updateIMU(); //accel,gyro
-//
-//    if (gpsFix) //when we have a gps fix
-//    {
-//        if(!ready_to_fly)
-//        {
-//            startPos.lat = current_location.lat;
-//            startPos.lng = current_location.lng;
-//
-//            ready_to_fly = true;
-//            time_to_fly = millis();
-//
-//        }
-//
-//    }
-//
-//    if(ready_to_fly)
-//    {
-//        if (!mission_done) 
-//        {
-//             stabilizeHeight();
-//        }
-//
-//        if(millis() - time_to_fly > 3000) //after 3 seconds start mission
-//        {
-//            at_height = true;
-//        }
-//
-//        if(at_height)
-//        {
-//            if(!mission_done)
-//            {
-//                flightMission(); //start navigation mission
-//            }
-//        }
-//       
-//    }
+    updateGpsReading();
+    updateAttitude(); //update yaw,pitch,roll vector
+    updateIMU(); //accel,gyro
+
+    if (gpsFix) //when we have a gps fix
+    {
+        if(!ready_to_fly)
+        {
+            startPos.lat = current_location.lat;
+            startPos.lng = current_location.lng;
+
+            ready_to_fly = true;
+            time_to_fly = millis();
+
+        }
+
+    }
+
+    if(ready_to_fly)
+    {
+        if (!mission_done) 
+        {
+             stabilizeHeight();
+             if(at_height)
+             {
+                if(!mission_done)
+                {
+                   flightMission(); //start navigation mission
+                }
+             }
+        }
+
+        if(millis() - time_to_fly > 3000) //after 3 seconds start mission
+        {
+            at_height = true;
+        }
+
+       
+    }
 }
 
 void landCraft()
@@ -619,14 +619,7 @@ void flightMission()
         if(way_point_counter == num_waypoints) //land the craft
         {
             mission_done = true;
-//            desired_height = 0.2;
-//            uh = 1100;
-//            u0 = 1400;
-            current_pitch = 1500;
-            current_roll = 1500;
-            current_throttle = 1000;
-           //desired_yaw = 1500;
-           //desired_roll = 1500;
+            landCraft();
         }
     }    
 
