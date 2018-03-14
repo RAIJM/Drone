@@ -152,6 +152,7 @@ PID * throttlePID; //pid controller for throttle
 PID * yawPID; //pid controller for yaw
 PID * rollPID; //pid controller for roll
 PID * pitchPID; //pid controller for pitch
+PID * landPID;
 
 int way_point_counter = 0; //current waypoint
 int num_waypoints = 1;
@@ -271,7 +272,9 @@ float start_alt;
 void setup()
 {
 
+    
 
+    
     setUpPIDs(); //set up pid controllers for roll,pitch,throttle,yaw
     setUpFilters(); //set up low pass filters for pitch,roll,yaw
     populateWayPoints(); //set up waypoints
@@ -325,18 +328,18 @@ void setup()
 
 void loop()
 {
-    //mainControl();
-    //Serial.println(throttle_chan);
-    //printRecieverValues();
-    //updateGpsReading();
-    //updateIMU();
-    updateDroneAlt();
+   
+    //Serial.println(drone_imu.acc[0]);
     //Serial.println(drone_altitude.estimatedActualPosition);
     //Serial.println(filter_alt->update(getAltitude()));
-    Serial.print("ms5611 ");
-    Serial.print(filter_new->update(getAltitude()));
-    Serial.print("bpm280 ");
-    Serial.println(filter_alt->update((start_alt - drone_altitude.estimatedActualPosition)/10));
+//    Serial.print("ms5611 ");
+//    Serial.print(filter_new->update(getAltitude()));
+//    Serial.print("bpm280 ");
+//    Serial.println(filter_alt->update((start_alt - drone_altitude.estimatedActualPosition)/10));
+    //Serial.println(getIRDistance());
+     //stabilizeHeight();
+     landCraft();
+    
     
        
 }
@@ -460,15 +463,32 @@ void autoPilot()
 //    }
 }
 
+void landCraft()
+{
+  float land_height = 0.2;
+  float distance = filter_alt->update(getIRDistance());
+  float error = land_height - (distance/100.0);
+  float throttlePIDVal = landPID->updatePID(error); //update pid controller for throttle
+
+  float desired_throttle = current_throttle + throttlePIDVal;
+  current_throttle = (int)constrain(desired_throttle,1000,2000);
+
+  Serial.print("Throttle: ");
+  Serial.print(current_throttle);
+  Serial.print("Distance: ");
+  Serial.println(distance);
+}
+
 
 void stabilizeHeight()
 {
 
   
     //float distance = filter_alt->update(drone_altitude.estimatedActualPosition/100.0); //current distance from reference point
-    float distance = filter_alt->update(getAltitude());
-    float error = desired_height - distance;
-    //float error = desired_height - (distance/100.0);
+    //float distance = filter_alt->update(getAltitude());
+    float distance = filter_alt->update(getIRDistance());
+    //float error = desired_height - distance;
+    float error = desired_height - (distance/100.0);
     //float error = (desired_height/100.0 - distance); //difference between target height and current height
     
     float throttlePIDVal = throttlePID->updatePID(error); //update pid controller for throttle
@@ -482,6 +502,11 @@ void stabilizeHeight()
     desired_throttle = (desired_throttle/ kt) + u0;
     
     current_throttle = (int)constrain(desired_throttle,1000,2000); //limit throttle between 1000 and 2000
+
+    Serial.print("Throttle: ");
+    Serial.print(current_throttle);
+    Serial.print("Distance: ");
+    Serial.println(distance);
 
     
 }
@@ -615,6 +640,7 @@ void setUpPIDs()
     rollPID = new PID(roll_kp,roll_ki,roll_kd,roll_bandwidth,0.01);
     pitchPID = new PID(pitch_kp,pitch_ki,pitch_kd,pitch_bandwidth,0.01);
     yawPID = new PID(yaw_kp,yaw_ki,yaw_kd,yaw_bandwidth,0.01);
+    landPID = new PID(0.8,0.4,6.0,20,0.01);
 }
 
 void setUpFilters()
