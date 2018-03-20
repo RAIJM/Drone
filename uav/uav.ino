@@ -33,7 +33,9 @@
 
 
 
-#define gpsSerial Serial2
+#define gpsSerial Serial3
+#define rcSerial Serial1
+#define mspSerial Serial2
 
 
 
@@ -140,8 +142,7 @@ float time_of_last_throttle_pid_update=0;
 
 SharpIR SharpIR(A0, model); //ir sensor
 
-static const int RXPin = 4, TXPin = 3;
-static const uint32_t GPSBaud = 9600;
+
 
 // The TinyGPS++ object
 TinyGPSPlus gps;
@@ -178,7 +179,8 @@ low_pass* filter_pitch; //low pass filter for pitch
 low_pass* filter_roll; //low pass filter for roll
 low_pass * filter_alt; //low pass filter for altitude(barometer)
 low_pass * filter_new;
-
+low_pass * filter_distance_front;
+low_pass * filter_distance_rear;
 KalmanFilter * state_x_kalman_filter; //kalman filter for x-axis(roll)
 KalmanFilter * state_y_kalman_filter; //kalman filter for y-axis(pitch)
 
@@ -240,6 +242,7 @@ void stabilizeHeight();
 float getAltitude();
 float getSonarDistance();
 int getIRDistance();
+float getPressureSensorDistance();
 float toFloat(double number, int digits,char * str);
 bool updateAttitude();
 void updateGpsReading();
@@ -251,6 +254,10 @@ void calculateStandardDeviation();
 String getValue(String data, char separator, int index);
 void sbusPreparePacket(uint8_t packet[], int channels[], bool isSignalLoss, bool isFailsafe);
 void sendCmd();
+void setUpUltrasonicSensors();
+float getDistanceFront();
+float getDistanceRear();
+void printAttitude();
 
 
 
@@ -264,6 +271,12 @@ void setAux2(int value);
 
 float start_alt;
 
+
+//ultrasonic pwm pins
+int trigPinFront = 4;
+int echoPinFront = 5;
+int trigPinRear = 2;
+int echoPinRear = 3;
 
 
 
@@ -282,13 +295,15 @@ void setup()
     
     Serial.begin(9600);
     
-    //setUpCompass();
+    setUpCompass();
 
 //    delay(1000);
 
     setUpPressureSensor();
 
     setUpGPS();
+
+    setUpUltrasonicSensors();
 
     time_to_fly = millis();
     time_to_send = millis();
@@ -297,7 +312,7 @@ void setup()
         rcChannels[i] = 1500;
     }
     
-    Serial1.begin(100000, SERIAL_8E2);
+    rcSerial.begin(100000, SERIAL_8E2);
 
 
 
@@ -305,13 +320,11 @@ void setup()
      
 //    Serial3.begin(38400); //bluetooth serial
 //    
-    Serial2.begin(115200); //serial for flight controller
-    msp.begin(Serial2);
+    mspSerial.begin(115200); //serial for flight controller
+    msp.begin(mspSerial);
 
-    updateDroneAlt();
-    start_alt = drone_altitude.estimatedActualPosition;
- 
-   
+
+
     
     // put your setup code here, to run once:
 
@@ -328,20 +341,11 @@ void setup()
 
 void loop()
 {
-   
-    //Serial.println(drone_imu.acc[0]);
-    //Serial.println(drone_altitude.estimatedActualPosition);
-    //Serial.println(filter_alt->update(getAltitude()));
-//    Serial.print("ms5611 ");
-//    Serial.print(filter_new->update(getAltitude()));
-//    Serial.print("bpm280 ");
-//    Serial.println(filter_alt->update((start_alt - drone_altitude.estimatedActualPosition)/10));
-    //Serial.println(getIRDistance());
-     //stabilizeHeight();
-     landCraft();
-    
-    
-       
+  
+  //mainControl();
+  //printAttitude();
+  Serial.println(getHeading());
+
 }
 
 
@@ -365,7 +369,7 @@ void mainControl()
         if(manual)  //if drone is in the manual
         {
            //set throttle,pitch,yaw,roll from reciever
-            Serial.print("manual");
+            //Serial.print("manual");
             setThrottle(throttle_chan);
             setYaw(yaw_chan);
             setRoll(roll_chan);
@@ -374,7 +378,7 @@ void mainControl()
         }else{ //if drone is in automatic
         
             autoPilot();
-               
+            
         }
 
     }
@@ -409,7 +413,7 @@ void sendCmd()
 
     if (currentMillis > sbusTime) {
         sbusPreparePacket(sbusPacket, rcChannels, false, false);
-        Serial1.write(sbusPacket, SBUS_PACKET_LENGTH);
+        rcSerial.write(sbusPacket, SBUS_PACKET_LENGTH);
 
         sbusTime = currentMillis + SBUS_UPDATE_RATE;
     }
@@ -422,45 +426,47 @@ void autoPilot()
     setYaw(current_yaw);
     setRoll(current_roll);
 
-    updateGpsReading();
-    updateAttitude(); //update yaw,pitch,roll vector
-    updateIMU(); //accel,gyro
+//    updateGpsReading(); 
+//    updateAttitude(); //update yaw,pitch,roll vector
+//    updateIMU(); //accel,gyro
 
-    if (gpsFix) //when we have a gps fix
-    {
-        if(!ready_to_fly)
-        {
-            startPos.lat = current_location.lat;
-            startPos.lng = current_location.lng;
+    stabilizeHeight();
 
-            ready_to_fly = true;
-            time_to_fly = millis();
-
-        }
-
-    }
-
-    if(ready_to_fly)
-    {
-        if (!mission_done) 
-        {
-             stabilizeHeight();
-             if(at_height)
-             {
-                if(!mission_done)
-                {
-                   flightMission(); //start navigation mission
-                }
-             }
-        }
-
-        if(millis() - time_to_fly > 3000) //after 3 seconds start mission
-        {
-            at_height = true;
-        }
-
-       
-    }
+//    if (gpsFix) //when we have a gps fix
+//    {
+//        if(!ready_to_fly)
+//        {
+//            startPos.lat = current_location.lat;
+//            startPos.lng = current_location.lng;
+//
+//            ready_to_fly = true;
+//            time_to_fly = millis();
+//
+//        }
+//
+//    }
+//
+//    if(ready_to_fly)
+//    {
+//        if (!mission_done) 
+//        {
+//             stabilizeHeight();
+//             if(at_height)
+//             {
+//                if(!mission_done)
+//                {
+//                   flightMission(); //start navigation mission
+//                }
+//             }
+//        }
+//
+//        if(millis() - time_to_fly > 3000) //after 3 seconds start mission
+//        {
+//            at_height = true;
+//        }
+//
+//       
+//    }
 }
 
 void landCraft()
@@ -473,10 +479,10 @@ void landCraft()
   float desired_throttle = current_throttle + throttlePIDVal;
   current_throttle = (int)constrain(desired_throttle,1000,2000);
 
-  Serial.print("Throttle: ");
-  Serial.print(current_throttle);
-  Serial.print("Distance: ");
-  Serial.println(distance);
+//  Serial.print("Throttle: ");
+//  Serial.print(current_throttle);
+//  Serial.print("Distance: ");
+//  Serial.println(distance);
 }
 
 
@@ -484,12 +490,9 @@ void stabilizeHeight()
 {
 
   
-    //float distance = filter_alt->update(drone_altitude.estimatedActualPosition/100.0); //current distance from reference point
-    //float distance = filter_alt->update(getAltitude());
-    float distance = filter_alt->update(getIRDistance());
-    //float error = desired_height - distance;
-    float error = desired_height - (distance/100.0);
-    //float error = (desired_height/100.0 - distance); //difference between target height and current height
+    
+    float distance = filter_alt->update(getAltitude());
+    float error = desired_height - distance;
     
     float throttlePIDVal = throttlePID->updatePID(error); //update pid controller for throttle
     
@@ -502,11 +505,11 @@ void stabilizeHeight()
     desired_throttle = (desired_throttle/ kt) + u0;
     
     current_throttle = (int)constrain(desired_throttle,1000,2000); //limit throttle between 1000 and 2000
-
-    Serial.print("Throttle: ");
-    Serial.print(current_throttle);
-    Serial.print("Distance: ");
-    Serial.println(distance);
+//
+//    Serial.print("Throttle: ");
+//    Serial.print(current_throttle);
+//    Serial.print("Distance: ");
+//    Serial.println(distance);
 
     
 }
@@ -518,7 +521,6 @@ void flightMission()
 
     LatLng current_dest;
 
-    //float heading = filter_yaw->update((float)convert_360_to_180(drone_attitude.yaw));
     float heading = filter_yaw->update((float)getHeading());
     
 
@@ -633,7 +635,32 @@ void setUpPIDs()
     rollPID = new PID(roll_kp,roll_ki,roll_kd,roll_bandwidth,0.01);
     pitchPID = new PID(pitch_kp,pitch_ki,pitch_kd,pitch_bandwidth,0.01);
     yawPID = new PID(yaw_kp,yaw_ki,yaw_kd,yaw_bandwidth,0.01);
-    landPID = new PID(0.8,0.4,6.0,20,0.01);
+    landPID = new PID(0.8,0.4,2.0,20,0.01);
+}
+
+
+float getAltitude()
+{
+  return getPressureSensorDistance();
+}
+
+void setUpUltrasonicSensors()
+{
+  pinMode(trigPinFront, OUTPUT); // Sets the trigPin as an Output
+  pinMode(echoPinFront, INPUT); // Sets the echoPin as an Input
+  pinMode(trigPinRear, OUTPUT); // Sets the trigPin as an Output
+  pinMode(echoPinRear, INPUT); // Sets the echoPin as an Input
+}
+
+
+float getDistanceFront()
+{
+  return filter_distance_front->update(getUltrasonicDistance(trigPinFront,echoPinFront));
+}
+
+float getDistanceRear()
+{
+  return filter_distance_rear->update(getUltrasonicDistance(trigPinRear,echoPinRear));
 }
 
 void setUpFilters()
@@ -643,6 +670,8 @@ void setUpFilters()
     filter_pitch = new low_pass(20,0.01);
     filter_alt = new low_pass(20,0.01);
     filter_new = new low_pass(20, 0.01);
+    filter_distance_front = new low_pass(20,0.01);
+    filter_distance_rear = new low_pass(20, 0.01);
 
     state_x_kalman_filter = new KalmanFilter(0.0f, 0.0f, pos_stddev, accx_stddev);
     state_y_kalman_filter = new KalmanFilter(0.0f, 0.0f, pos_stddev , accy_stddev);
@@ -686,8 +715,16 @@ void setUpPressureSensor()
         delay(500);
     }
     
+    //Calibrating pressure
+    float pressure_sum;
+    for( int i=0;i<10;i++)
+    {
+      pressure_sum += ms5611.readPressure();
+    }
+    float pressure_avg = pressure_sum /10;
+
     //Get reference pressure for relative altitude
-    referencePressure = ms5611.readPressure();
+    referencePressure = pressure_avg;
    
     //Check settings
     Serial.print("Oversampling: ");
@@ -697,7 +734,7 @@ void setUpPressureSensor()
 
 void setUpGPS()
 {
-  gpsSerial.begin(GPSBaud);
+  gpsSerial.begin(9600);
 
   Serial.println(F("DeviceExample.ino"));
   Serial.println(F("A simple demonstration of TinyGPS++ with an attached GPS module"));
@@ -776,14 +813,6 @@ void failSafe()
     }
 }
 
-//gets the altitude from pressre sensor
-float getAltitude()
-{
-    long realPressure = ms5611.readPressure();
-    float relativeAltitude = ms5611.getAltitude(realPressure, referencePressure);
-
-    return relativeAltitude; //in meters
-}
 
 bool updateAttitude()
 {
@@ -823,6 +852,16 @@ bool updateDroneAlt()
   
 }
 
+//gets the altitude from pressre sensor
+float getPressureSensorDistance()
+{
+    long realPressure = ms5611.readPressure();
+    float relativeAltitude = ms5611.getAltitude(realPressure, referencePressure);
+
+    return relativeAltitude; //in meters
+}
+
+
 
 float getUltrasonicDistance(int trig_pin, int echo_pin)
 {
@@ -832,7 +871,7 @@ float getUltrasonicDistance(int trig_pin, int echo_pin)
     digitalWrite(trig_pin, HIGH);
     delayMicroseconds(10); // Added this line
     digitalWrite(trig_pin, LOW);
-    duration = pulseIn(echo_pin, HIGH);
+    duration = pulseIn(echo_pin, HIGH,10000);
     distance = (duration/2) / 29.1;
     return distance;
 }
@@ -868,13 +907,13 @@ int getHeading()
     int heading;
 
     //heading is off by 90 degrees
-    if(angle < 260)
+    if(angle < 10)
     {
         //heading = 180 + angle;
-      heading = 360 - (260 - angle);
+      heading = 360 - (10 - angle);
     }else{
         //angle = heading - 90;
-        heading = angle - 260;
+        heading = angle - 10;
     }
     
     drone_heading = heading;
@@ -909,7 +948,7 @@ void updateGpsReading()
 
     if(newdata)
     {
-        Serial.print("Hello");
+        //Serial.print("Hello");
         checkGpsInfo();
        
     }
@@ -920,9 +959,9 @@ void checkGpsInfo()
     if (gps.location.isValid())
     {
         gpsFix = true;
-        Serial.print(gps.location.lat(), 6);
-        Serial.print(F(","));
-        Serial.print(gps.location.lng(), 6);
+//        Serial.print(gps.location.lat(), 6);
+//        Serial.print(F(","));
+//        Serial.print(gps.location.lng(), 6);
 
         char str_lat[13];
         char str_lon[13];
@@ -999,6 +1038,17 @@ float toFloat(double number, int digits,char * str)
     str[char_count] = 0;
     float temp = atof(str);
     return temp;
+}
+
+void printAttitude()
+{
+  updateAttitude();
+  Serial.print("Roll: ");
+  Serial.print( drone_attitude.roll);
+  Serial.print("Yaw: ");
+  Serial.print(drone_attitude.yaw);
+  Serial.print("Pitch: ");
+  Serial.print(drone_attitude.pitch);
 }
 
 
