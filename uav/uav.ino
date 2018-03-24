@@ -36,6 +36,7 @@
 #define gpsSerial Serial3
 #define rcSerial Serial1
 #define mspSerial Serial2
+#define bluetoothSerial Serial
 
 
 
@@ -123,7 +124,7 @@ float g = 9.8;
 float vehicle_weight = 0.84;
 
 int u0 = 1000; // Zero throttle command
-int uh = 1700; // Hover throttle command
+int uh = 1500; // Hover throttle command
 float kt = vehicle_weight * g / (uh-u0);
 float desired_height = 1.0; //in meters
 
@@ -259,6 +260,9 @@ float getDistanceFront();
 float getDistanceRear();
 void printAttitude();
 
+void initRC();
+void sendMSPRCCmd();
+
 
 
 
@@ -278,6 +282,12 @@ int echoPinFront = 5;
 int trigPinRear = 2;
 int echoPinRear = 3;
 
+uint8_t drone_roll_pid[] = {};
+uint8_t drone_pitch_pid[] = {};
+
+msp_set_raw_rc_t  mSetRawRC;
+
+
 
 
 
@@ -294,12 +304,12 @@ void setup()
     disarm(); //make sure the drone is disarmed
     
     Serial.begin(9600);
-    
+    //bluetoothSerial.begin(38400);
     setUpCompass();
 
 //    delay(1000);
 
-    setUpPressureSensor();
+    //setUpPressureSensor();
 
     setUpGPS();
 
@@ -324,6 +334,11 @@ void setup()
     msp.begin(mspSerial);
 
 
+    updateDroneAlt();
+    initRC();
+    start_alt = drone_altitude.estimatedActualPosition;
+
+
 
     
     // put your setup code here, to run once:
@@ -341,10 +356,32 @@ void setup()
 
 void loop()
 {
-  
+  //printRecieverValues();
   //mainControl();
-  //printAttitude();
-  Serial.println(getHeading());
+ // stabilizeHeight();
+  //mainControl();
+  //mainControl();
+//  msp_rc_t rc;
+//  if (msp.request(MSP_RC, &rc, sizeof(rc))) {
+//    
+//    uint16_t roll     = rc.channelValue[0];
+//    uint16_t pitch    = rc.channelValue[1];
+//    uint16_t yaw      = rc.channelValue[2];
+//    uint16_t throttle = rc.channelValue[3];
+//    Serial.print("Roll: ");
+//    Serial.print(roll);
+//    Serial.print("Pitch: ");
+//    Serial.print(pitch);
+//    Serial.print("Yaw: ");
+//    Serial.print(yaw);
+//    Serial.print("Throttle: ");
+//    Serial.println(throttle);
+//  }
+  
+ 
+
+ 
+   
 
 }
 
@@ -353,7 +390,8 @@ void loop()
 void mainControl()
 {
     
-    sendCmd(); //send control values to flight controller(pitch,roll,yaw,throttle)
+    //sendCmd(); //send control values to flight controller(pitch,roll,yaw,throttle)
+    sendMSPRCCmd();
     
     if(!armed) //if drone is not armed
     {
@@ -363,6 +401,7 @@ void mainControl()
             setThrottle(885); //throttle needs to be at this value for drone to be armed
             arm(); //arm the drone
         }
+      //  Serial.println("Not armed");
     
     }else{
         
@@ -380,6 +419,7 @@ void mainControl()
             autoPilot();
             
         }
+      //  Serial.println("armed");
 
     }
 
@@ -419,15 +459,37 @@ void sendCmd()
     }
 }
 
+void initRC()
+{
+  msp_rc_t rc;
+  if (msp.request(MSP_RC, &rc, sizeof(rc))) {
+    
+    uint16_t roll     = rc.channelValue[0];
+    uint16_t pitch    = rc.channelValue[1];
+    uint16_t yaw      = rc.channelValue[2];
+    uint16_t throttle = rc.channelValue[3];
+    memcpy (&mSetRawRC, &rc, sizeof(rc) );
+  }
+}
+
+void sendMSPRCCmd()
+{
+  if(msp.command(MSP_SET_RAW_RC, &mSetRawRC, sizeof(mSetRawRC)))
+  {
+      //Serial.println("It worked");
+  }
+}
+
 void autoPilot()
 {
     setThrottle(current_throttle);
     setPitch(current_pitch);
     setYaw(current_yaw);
     setRoll(current_roll);
-
-//    updateGpsReading(); 
-//    updateAttitude(); //update yaw,pitch,roll vector
+//
+////    updateGpsReading(); 
+    updateAttitude(); //update yaw,pitch,roll vector
+    updateDroneAlt();
 //    updateIMU(); //accel,gyro
 
     stabilizeHeight();
@@ -479,10 +541,10 @@ void landCraft()
   float desired_throttle = current_throttle + throttlePIDVal;
   current_throttle = (int)constrain(desired_throttle,1000,2000);
 
-//  Serial.print("Throttle: ");
-//  Serial.print(current_throttle);
-//  Serial.print("Distance: ");
-//  Serial.println(distance);
+  Serial.print("Throttle: ");
+  Serial.print(current_throttle);
+  Serial.print("Distance: ");
+  Serial.println(distance);
 }
 
 
@@ -506,10 +568,10 @@ void stabilizeHeight()
     
     current_throttle = (int)constrain(desired_throttle,1000,2000); //limit throttle between 1000 and 2000
 //
-//    Serial.print("Throttle: ");
-//    Serial.print(current_throttle);
-//    Serial.print("Distance: ");
-//    Serial.println(distance);
+    Serial.print("Throttle: ");
+    Serial.print(current_throttle);
+    Serial.print("Distance: ");
+    Serial.println(distance);
 
     
 }
@@ -641,7 +703,9 @@ void setUpPIDs()
 
 float getAltitude()
 {
-  return getPressureSensorDistance();
+  
+  return (drone_altitude.estimatedActualPosition/100.0) - (start_alt/100.0);
+  //return getPressureSensorDistance();
 }
 
 void setUpUltrasonicSensors()
@@ -725,6 +789,7 @@ void setUpPressureSensor()
 
     //Get reference pressure for relative altitude
     referencePressure = pressure_avg;
+    Serial.print(referencePressure);
    
     //Check settings
     Serial.print("Oversampling: ");
@@ -746,31 +811,38 @@ void setUpGPS()
 void setAux1(int val)
 {
   rcChannels[4] = val;
+  mSetRawRC.channel[4] = val;
+ 
 }
 
 void setAux2(int val)
 {
   rcChannels[5] = val;
+  mSetRawRC.channel[5] = val;
 }
 
 void setThrottle(int val)
 {
   rcChannels[2] = val;
+  mSetRawRC.channel[3] = val;
 }
 
 void setPitch(int val)
 {
   rcChannels[1]= val;
+  mSetRawRC.channel[1] = val;
 }
 
 void setYaw(int val)
 {
   rcChannels[3] = val;
+  mSetRawRC.channel[2] = val;
 }
 
 void setRoll(int val)
 {
   rcChannels[0] = val;
+  mSetRawRC.channel[0] = val;
 }
 
 
@@ -850,6 +922,35 @@ bool updateDroneAlt()
         return false;
   }
   
+}
+
+void setAndGetPIDs()
+{
+   msp_pid_t pid;
+  if(msp.request(MSP_PID, &pid, sizeof(pid)))
+  {
+    Serial.print("Roll PiD's");
+    Serial.print(pid.roll[0]);
+    Serial.print(pid.roll[1]);
+    Serial.print(pid.roll[2]);
+    Serial.println();
+
+     msp_set_pid_t pid_send;
+     memcpy ( &pid_send, &pid, sizeof(pid) );
+     pid_send.roll[0] = drone_roll_pid[0];
+     pid_send.roll[1] = drone_roll_pid[1];
+     pid_send.roll[2] = drone_roll_pid[2];
+     pid_send.pitch[0] = drone_pitch_pid[0];
+     pid_send.pitch[1] = drone_pitch_pid[1];
+     pid_send.pitch[2] = drone_pitch_pid[2];
+ 
+     if(msp.command(MSP_SET_PID, &pid_send, sizeof(pid_send)))
+     {
+        Serial.print("it worked");
+      
+     }
+    
+  }
 }
 
 //gets the altitude from pressre sensor
@@ -1062,6 +1163,7 @@ void sendBluetoothData()
     
     
     float height = getAltitude();
+    drone_heading = getHeading();
 
     char str_lat[13];
     char str_lng[13]; 
@@ -1111,7 +1213,7 @@ void sendBluetoothData()
     char resp[len];
     s.toCharArray(resp,len);
     //Serial.print(resp);
-    int bytes = Serial3.write(resp,sizeof(resp));
+    int bytes = bluetoothSerial.write(resp,sizeof(resp));
 }
 
 
