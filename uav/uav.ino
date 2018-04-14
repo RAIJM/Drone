@@ -313,7 +313,7 @@ void setup()
 
     setUpGPS();
 
-    setUpUltrasonicSensors();
+   // setUpUltrasonicSensors();
 
     time_to_fly = millis();
     time_to_send = millis();
@@ -356,33 +356,9 @@ void setup()
 
 void loop()
 {
-  //printRecieverValues();
-  //mainControl();
- // stabilizeHeight();
-  //mainControl();
-  //mainControl();
-//  msp_rc_t rc;
-//  if (msp.request(MSP_RC, &rc, sizeof(rc))) {
-//    
-//    uint16_t roll     = rc.channelValue[0];
-//    uint16_t pitch    = rc.channelValue[1];
-//    uint16_t yaw      = rc.channelValue[2];
-//    uint16_t throttle = rc.channelValue[3];
-//    Serial.print("Roll: ");
-//    Serial.print(roll);
-//    Serial.print("Pitch: ");
-//    Serial.print(pitch);
-//    Serial.print("Yaw: ");
-//    Serial.print(yaw);
-//    Serial.print("Throttle: ");
-//    Serial.println(throttle);
-//  }
-  
+  //sendMSPRCCmd();
+  mainControl();
  
-
- 
-   
-
 }
 
 
@@ -476,7 +452,7 @@ void sendMSPRCCmd()
 {
   if(msp.command(MSP_SET_RAW_RC, &mSetRawRC, sizeof(mSetRawRC)))
   {
-      //Serial.println("It worked");
+      Serial.println("It worked");
   }
 }
 
@@ -810,39 +786,43 @@ void setUpGPS()
 
 void setAux1(int val)
 {
-  rcChannels[4] = val;
+  //rcChannels[4] = val;
   mSetRawRC.channel[4] = val;
  
 }
 
 void setAux2(int val)
 {
-  rcChannels[5] = val;
+  //rcChannels[5] = val;
   mSetRawRC.channel[5] = val;
 }
 
 void setThrottle(int val)
 {
-  rcChannels[2] = val;
-  mSetRawRC.channel[3] = val;
+  //0
+  //rcChannels[0] = val;
+  mSetRawRC.channel[0] = val;
 }
 
 void setPitch(int val)
 {
-  rcChannels[1]= val;
-  mSetRawRC.channel[1] = val;
+  //2
+  //rcChannels[1]= val;
+  mSetRawRC.channel[2] = val;
 }
 
 void setYaw(int val)
 {
-  rcChannels[3] = val;
-  mSetRawRC.channel[2] = val;
+  //3
+  //rcChannels[2] = val;
+  mSetRawRC.channel[3] = val;
 }
 
 void setRoll(int val)
 {
-  rcChannels[0] = val;
-  mSetRawRC.channel[0] = val;
+  //1
+  //rcChannels[3] = val;
+  mSetRawRC.channel[1] = val;
 }
 
 
