@@ -356,7 +356,7 @@ void setup()
 
 void loop()
 {
-  //sendMSPRCCmd();
+  
   mainControl();
  
 }
@@ -1384,6 +1384,35 @@ void printRecieverValues()
   Serial.println(aux2_chan);
 
   
+}
+
+void testIMU()
+{
+  updateIMU();
+  Serial.print("AccX: ");
+  Serial.print(drone_imu.acc[0]);
+  Serial.print("AccY: ");
+  Serial.print(drone_imu.acc[1]);
+  Serial.print("AccZ: ");
+  Serial.println(drone_imu.acc[2]);
+}
+
+void testAttitude()
+{
+  updateAttitude();
+  Serial.print("Pitch: ");
+  Serial.print(drone_attitude.pitch);
+  Serial.print("Roll: ");
+  Serial.print(drone_attitude.roll);
+  Serial.print("Yaw: ");
+  Serial.println(drone_attitude.yaw);
+}
+
+void testAltitude()
+{
+  updateDroneAlt();
+  Serial.print("Altitude: ");
+  Serial.print(getAltitude());
 }
 
 
