@@ -109,13 +109,13 @@ float yaw_ki = 0.0;
 float yaw_bandwidth = 50;
 
 float roll_kp = 30;
-float roll_kd = 10;
+float roll_kd = 0.0;
 float roll_ki = 0.0;
 float roll_bandwidth = 50;
 
-float pitch_kp = 30;
-float pitch_kd = 10;
-float pitch_ki = 0.0;
+float pitch_kp = 100;
+float pitch_kd = 0.0;
+float pitch_ki = 20;
 float pitch_bandwidth = 50;
 
 
@@ -124,9 +124,9 @@ float g = 9.8;
 float vehicle_weight = 0.84;
 
 int u0 = 1000; // Zero throttle command
-int uh = 1500; // Hover throttle command
+int uh = 1700; // Hover throttle command
 float kt = vehicle_weight * g / (uh-u0);
-float desired_height = 1.0; //in meters
+float desired_height = 2.0; //in meters
 
 float time_of_last_throttle_pid_update=0;
 
@@ -263,6 +263,8 @@ void printAttitude();
 void initRC();
 void sendMSPRCCmd();
 
+void setUpGps();
+
 
 
 
@@ -318,11 +320,11 @@ void setup()
     time_to_fly = millis();
     time_to_send = millis();
 
-    for (uint8_t i = 0; i < SBUS_CHANNEL_NUMBER; i++) {
-        rcChannels[i] = 1500;
-    }
-    
-    rcSerial.begin(100000, SERIAL_8E2);
+//    for (uint8_t i = 0; i < SBUS_CHANNEL_NUMBER; i++) {
+//        rcChannels[i] = 1500;
+//    }
+//    
+//    rcSerial.begin(100000, SERIAL_8E2);
 
 
 
@@ -333,10 +335,18 @@ void setup()
     mspSerial.begin(115200); //serial for flight controller
     msp.begin(mspSerial);
 
-
+    //updateGpsReading();
+    
     updateDroneAlt();
     initRC();
-    start_alt = drone_altitude.estimatedActualPosition;
+    float avg_sum;
+    for(int i=0;i<10;i++)
+    {
+      avg_sum+=drone_altitude.estimatedActualPosition;
+      updateDroneAlt();
+    }
+    start_alt = avg_sum/10;
+    
 
 
 
@@ -357,7 +367,8 @@ void setup()
 void loop()
 {
   
-  mainControl();
+ mainControl();
+
  
 }
 
@@ -388,7 +399,7 @@ void mainControl()
             setThrottle(throttle_chan);
             setYaw(yaw_chan);
             setRoll(roll_chan);
-            setPitch(pitch_chan);
+            setPitch(pitch_chan);  
 
         }else{ //if drone is in automatic
         
@@ -452,59 +463,59 @@ void sendMSPRCCmd()
 {
   if(msp.command(MSP_SET_RAW_RC, &mSetRawRC, sizeof(mSetRawRC)))
   {
-      Serial.println("It worked");
+      //Serial.println("It worked");
   }
 }
 
-void autoPilot()
+void  autoPilot()
 {
     setThrottle(current_throttle);
     setPitch(current_pitch);
     setYaw(current_yaw);
     setRoll(current_roll);
-//
-////    updateGpsReading(); 
+
+    updateGpsReading(); 
     updateAttitude(); //update yaw,pitch,roll vector
     updateDroneAlt();
 //    updateIMU(); //accel,gyro
 
-    stabilizeHeight();
+   // stabilizeHeight();
 
-//    if (gpsFix) //when we have a gps fix
-//    {
-//        if(!ready_to_fly)
-//        {
-//            startPos.lat = current_location.lat;
-//            startPos.lng = current_location.lng;
-//
-//            ready_to_fly = true;
-//            time_to_fly = millis();
-//
-//        }
-//
-//    }
-//
-//    if(ready_to_fly)
-//    {
-//        if (!mission_done) 
-//        {
-//             stabilizeHeight();
-//             if(at_height)
-//             {
-//                if(!mission_done)
-//                {
-//                   flightMission(); //start navigation mission
-//                }
-//             }
-//        }
-//
-//        if(millis() - time_to_fly > 3000) //after 3 seconds start mission
-//        {
-//            at_height = true;
-//        }
-//
-//       
-//    }
+    if (gpsFix) //when we have a gps fix
+    {
+        if(!ready_to_fly)
+        {
+            startPos.lat = current_location.lat;
+            startPos.lng = current_location.lng;
+
+            ready_to_fly = true;
+            time_to_fly = millis();
+
+        }
+
+    }
+
+    if(ready_to_fly)
+    {
+        if (!mission_done) 
+        {
+             stabilizeHeight();
+             if(at_height)
+             {
+                if(gpsFix){
+                  flightMission(); //start navigation mission  
+                }
+                
+             }
+        }
+
+        if(millis() - time_to_fly > 3000) //after 3 seconds start mission
+        {
+            at_height = true;
+        }
+
+       
+    }
 }
 
 void landCraft()
@@ -517,10 +528,10 @@ void landCraft()
   float desired_throttle = current_throttle + throttlePIDVal;
   current_throttle = (int)constrain(desired_throttle,1000,2000);
 
-  Serial.print("Throttle: ");
-  Serial.print(current_throttle);
-  Serial.print("Distance: ");
-  Serial.println(distance);
+//  Serial.print("Throttle: ");
+//  Serial.print(current_throttle);
+//  Serial.print("Distance: ");
+//  Serial.println(distance);
 }
 
 
@@ -544,10 +555,10 @@ void stabilizeHeight()
     
     current_throttle = (int)constrain(desired_throttle,1000,2000); //limit throttle between 1000 and 2000
 //
-    Serial.print("Throttle: ");
-    Serial.print(current_throttle);
-    Serial.print("Distance: ");
-    Serial.println(distance);
+//    Serial.print("Throttle: ");
+//    Serial.print(current_throttle);
+//    Serial.print("Distance: ");
+//    Serial.println(distance);
 
     
 }
@@ -562,10 +573,15 @@ void flightMission()
     float heading = filter_yaw->update((float)getHeading());
     
 
-    if(!pos_hold) //if not is position hold mode
-        current_dest = waypoints[way_point_counter]; //get the current destination
-    else
-        current_dest = startPos;
+//    if(!pos_hold) //if not is position hold mode
+//        current_dest = waypoints[way_point_counter]; //get the current destination
+//    else
+//        current_dest = startPos;
+      current_dest = startPos;
+
+//    Serial.print(current_dest.lat, 5);
+//    Serial.print(F(","));
+//    Serial.println(current_dest.lng, 5);
     
     float bearing_x, distance_x; //horizontal distance
     
@@ -652,16 +668,30 @@ void flightMission()
     calcDistanceAndBearing(current_location.lat,current_location.lng,current_dest.lat,current_dest.lng,&actual_distance,&actual_bearing);
 
 
-    if(actual_distance < 5) //if craft is within 5m radius of destination
-    {
-       
-        way_point_counter++;
-        if(way_point_counter == num_waypoints) //land the craft
-        {
-            mission_done = true;
-            landCraft();
-        }
-    }    
+//    if(actual_distance < 5) //if craft is within 5m radius of destination
+//    {
+//       
+//        way_point_counter++;
+//        if(way_point_counter == num_waypoints) //land the craft
+//        {
+//            mission_done = true;
+//            current_throttle = 1000;
+//            Serial.println("Im here");
+//            //landCraft();
+//        }
+//    }
+//
+//    Serial.print("Throttle: ");
+//    Serial.print(current_throttle);
+//    Serial.print("Roll: ");
+//    Serial.print(current_roll);
+//    Serial.print("Pitch: ");
+//    Serial.print(current_pitch);
+//    Serial.print("Yaw: ");
+//    Serial.print(current_yaw);
+//    Serial.print("Distance: ");
+//    Serial.println(actual_distance);
+//   
 
 }
 
@@ -720,12 +750,14 @@ void setUpFilters()
 
 void populateWayPoints()
 {
-    current_location.lat = 18.00445;
-    current_location.lng = -76.74820;
-    
+//    current_location.lat = 18.00445;
+//    current_location.lng = -76.74820;
+//    
     LatLng dest;
-    dest.lat = 18.00440;
-    dest.lng = -76.74830;
+    
+    
+    dest.lat = startPos.lat;
+    dest.lng = startPos.lng;
     waypoints[0] = dest;
 }
 
@@ -1010,7 +1042,7 @@ void updateGpsReading()
     while (gpsSerial.available()) 
     {
         char c = gpsSerial.read();
-        Serial.print(c);
+        //Serial.print(c);
 
         //Serial.print(gps.satellites());
         if (gps.encode(c)) //if we got a fix
@@ -1047,8 +1079,8 @@ void checkGpsInfo()
         char str_lat[13];
         char str_lon[13];
 
-        float flat = toFloat(flat, 5,str_lat);
-        float flon = toFloat(flon, 5, str_lon); //longitude
+        float flat = toFloat(gps.location.lat(), 5,str_lat);
+        float flon = toFloat(gps.location.lng(), 5, str_lon); //longitude
 
         current_location.lat = flat;
         current_location.lng = flon;
@@ -1095,7 +1127,7 @@ float toFloat(double number, int digits,char * str)
         i+=1;
         char_count+=1;
     }
-    //Serial.print(int_part);
+   // Serial.print(int_part);
 
     // Print the decimal point, but only if there are digits beyond
     if (digits > 0){

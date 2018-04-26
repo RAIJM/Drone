@@ -10,13 +10,13 @@ float toPWM(float value)
 
 float radians_to_degrees(float x)
 {
-    return x / 180.0 * 3.14;
+    return x * 180.0 / M_PI;
 }
 
 
 float degrees_to_radians(float x)
 {
-	return x * 0.0174533;
+	return x * M_PI / 180.0;
 }
 
 
