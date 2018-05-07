@@ -33,6 +33,7 @@ void KalmanFilter::update_control_matrix(float dt)
 {
 	this->B.Put(0, 0, 0.5 * dt * dt);
 	this->B.Put(1, 0, dt);
+	
 
 }
 
@@ -56,7 +57,7 @@ float KalmanFilter::getPosition()
 //returns the current velocity
 float KalmanFilter::getVelocity()
 {
-	return this->current_state.Get(1, 1);
+	return this->current_state.Get(1, 0);
 }
 
 
@@ -70,18 +71,40 @@ void KalmanFilter::Predict(float accel, float dt)
 
 	this->u.Put(0,0,accel); 
     
-
+	Serial.println("----------Predict---------------");
     Matrix ax = this->A.Multiply(this->current_state);
+    Serial.print("ax: ");
+    ax.printMatrix();
+    Serial.print("B: ");
+    this->B.printMatrix();
+    Serial.print("u: ");
+    this->u.printMatrix();
     Matrix bu = this->B.Multiply(this->u);
+    Serial.print("bu: ");
+    bu.printMatrix();
     Matrix ax_bu = ax.Add(bu);
+    Serial.print("ax_bu: ");
+    ax_bu.printMatrix();
     this->current_state.setMatrix(ax_bu);
+    Serial.print("current_state: ");
+    this->current_state.printMatrix();
 
 
     Matrix ap = this->A.Multiply(this->P);
+    Serial.print("ap: ");
+    ap.printMatrix();
     Matrix at = this->A.Transpose();
+    Serial.print("at: ");
+    at.printMatrix();
     Matrix apt = ap.Multiply(at);
+    Serial.print("apt: ");
+    apt.printMatrix();
     Matrix apt_q = apt.Add(this->Q);
+    Serial.print("apt_q: ");
+    apt_q.printMatrix();
     this->P.setMatrix(apt_q);
+    Serial.print("P: ");
+    this->P.printMatrix();
 
     ax.freeMemory();
     bu.freeMemory();
@@ -102,33 +125,78 @@ void KalmanFilter::Predict(float accel, float dt)
 // P = (I - KH)P (Covariance Update - New estimate of error)
 void KalmanFilter::Update(float pos, float velocity, float pos_error, float velocity_error)
 {
+
+	Serial.println("---------Update---------");
 	this->z.Put(0, 0, pos);
 	this->z.Put(1, 0, velocity);
 
+	Serial.print("H: ");
+	this->H.printMatrix();
+
+	Serial.print("current_state: ");
+	this->current_state.printMatrix();
+
 
 	Matrix h_x = this->H.Multiply(this->current_state);
+	Serial.print("h_x: ");
+	h_x.printMatrix();
+	
 	Matrix y = this->z.Subtract(h_x);
+	Serial.print("y: ");
+	y.printMatrix();
 	
 	Matrix ht = this->H.Transpose();
+	Serial.print("ht: ");
+	ht.printMatrix();
 	Matrix p_ht = this->P.Multiply(ht);
+	Serial.print("p_ht: ");
+	p_ht.printMatrix();
 	Matrix hpht = this->H.Multiply(p_ht);
+	Serial.print("hpht: ");
+	hpht.printMatrix();
 	Matrix S = hpht.Add(this->R);
+	Serial.print("S: ");
+	S.printMatrix();
     
     S.Inverse();
+
+    Serial.print("S-: ");
+    S.printMatrix();
     
 	Matrix K = p_ht.Multiply(S);
+	Serial.print("K: ");
+	K.printMatrix();
 	Matrix K_y = K.Multiply(y);
+	Serial.print("K_y: ");
+	K_y.printMatrix();
 	Matrix x_Ky = this->current_state.Add(K_y);
+	Serial.print("x_Ky: ");
+	x_Ky.printMatrix();
 
 	this->current_state.setMatrix(x_Ky);
+	Serial.print("current_state: ");
+	this->current_state.printMatrix();
+
+	//this->current_state.printMatrix();
    
 
 
 	Matrix k_h  = K.Multiply(this->H);
+	Serial.print("k_h: ");
+	k_h.printMatrix();
 	Matrix i_kh = this->I.Subtract(k_h);
+	Serial.print("i_kh: ");
+	i_kh.printMatrix();
 	Matrix ikh_p = i_kh.Multiply(this->P);
+	Serial.print("ikh_p: ");
+	ikh_p.printMatrix();
 
 	this->P.setMatrix(ikh_p);
+	Serial.print("P: ");
+	this->P.printMatrix();
+
+
+
 
 	h_x.freeMemory();
 	y.freeMemory();
@@ -142,4 +210,11 @@ void KalmanFilter::Update(float pos, float velocity, float pos_error, float velo
 	k_h.freeMemory();
 	i_kh.freeMemory();
 	ikh_p.freeMemory();
+
+	Serial.print("current_state: ");
+	current_state.printMatrix();
+
+
+
+
 }

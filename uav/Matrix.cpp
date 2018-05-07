@@ -7,8 +7,9 @@ void Matrix::init(int nrows, int ncols)
 {
 	this->n_rows = nrows;
 	this->n_cols = ncols;
-	this->matrix = (float *) calloc(this->n_rows * this->n_cols,sizeof(float));
-
+	float m[this->n_rows * this->n_cols];
+	//this->matrix = (float *) calloc(this->n_rows * this->n_cols,sizeof(float));
+	this->matrix = m;
 }
 
 
@@ -17,6 +18,8 @@ void Matrix::init(int nrows, int ncols)
 //Puts element at row and column
 void Matrix::Put(int row,int col, float value)
 {
+	//Serial.print("Put: ");
+	//Serial.print(value);
 	this->matrix[this->n_cols*row + col] = value;
 }
 
@@ -133,7 +136,7 @@ void Matrix::printMatrix()
 		for(j=0; j < this->n_cols; j++)
 		{
 			//printf("%.4f ",this->Get(i,j));
-			Serial.print(this->Get(i,j));
+			Serial.print(this->Get(i,j),9);
 		}
 		
 
