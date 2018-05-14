@@ -11,6 +11,7 @@
 #include "KalmanFilter.h"
 #include "MS5611.h"
 //#include "Matrix.h"
+#include "MemoryFree.h"
 
 
 
@@ -109,14 +110,14 @@ float yaw_kd = 0.0;
 float yaw_ki = 0.0;
 float yaw_bandwidth = 50;
 
-float roll_kp = 0.05;
-float roll_kd = 0.08;
-float roll_ki = 0.0;
+float roll_kp = 0.06;
+float roll_kd = 0.00;
+float roll_ki = 0.00;
 float roll_bandwidth = 50;
 
-float pitch_kp = 0.05;
-float pitch_kd = 0.08;
-float pitch_ki = 0.0;
+float pitch_kp = 0.06;
+float pitch_kd = 0.00;
+float pitch_ki = 0.00;
 float pitch_bandwidth = 50;
 
 
@@ -127,7 +128,7 @@ float vehicle_weight = 0.84;
 int u0 = 1000; // Zero throttle command
 int uh = 1700; // Hover throttle command
 float kt = vehicle_weight * g / (uh-u0);
-float desired_height = 2.0; //in meters
+float desired_height = 3.0; //in meters
 
 float time_of_last_throttle_pid_update=0;
 
@@ -257,7 +258,7 @@ float getDistanceRear();
 void printAttitude();
 
 void initRC();
-void sendMSPRCCmd();
+bool sendMSPRCCmd();
 
 void setUpGps();
 
@@ -285,10 +286,9 @@ uint8_t drone_pitch_pid[] = {};
 
 msp_set_raw_rc_t  mSetRawRC;
 
-bool debug_mode = true;
+bool debug_mode = false;
 
-Matrix m3;
-Matrix m2;
+
 
 
 
@@ -310,7 +310,6 @@ void setup()
     //bluetoothSerial.begin(38400);
     setUpCompass();
 
-//    delay(1000);
 
     //setUpPressureSensor();
 
@@ -337,10 +336,10 @@ void setup()
     float avg_sum;
     for(int i=0;i<10;i++) 
     {
-      avg_sum+=drone_altitude.estimatedActualPosition;
+      start_alt = drone_altitude.estimatedActualPosition;
       updateDroneAlt();
     }
-    start_alt = avg_sum/10;
+     //= avg_sum/10;
     
 
 
@@ -357,28 +356,15 @@ void setup()
     PCMSK0 |= (1 << PCINT4);                                                  //Set PCINT4 (digital input 10)to trigger an interrupt on state change.
     PCMSK0 |= (1 << PCINT5);                                                  //Set PCINT5 (digital input 11)to trigger an interrupt on state change.
 
-    m3.init(2,1);
-    m2.init(1,1);
-    m3.Put(0,0,0.938449954);
-    m3.Put(1,0,-1.370000004);
-    m2.Put(0,0,0.0000000);
+
 }
 
 
 void loop()
 {
-    //Serial.println(getHeading());
-    //mainControl();
-    //printRecieverValues();
-   // testAttitude();
-   updateIMU();
-   flightMission();
-//      m3.printMatrix();
-//      m2.printMatrix();
-//     Matrix m1 = m3.Multiply(m2);
-//     m1.printMatrix();
-//     m1.freeMemory();
-  
+    
+    mainControl();
+   
 } 
 
 
@@ -398,7 +384,6 @@ void mainControl()
             setThrottle(885); //throttle needs to be at this value for drone to be armed
             arm(); //arm the drone
         }
-      //  Serial.println("Not armed");
     
     }else{
         
@@ -415,7 +400,6 @@ void mainControl()
             autoPilot();
             
         }
-      //  Serial.println("armed");
 
     }
 
@@ -468,12 +452,14 @@ void initRC()
   }
 }
 
-void sendMSPRCCmd()
+bool sendMSPRCCmd()
 {
-  if(msp.command(MSP_SET_RAW_RC, &mSetRawRC, sizeof(mSetRawRC)))
-  {
-      //Serial.println("It worked");
-  }
+    if(msp.command(MSP_SET_RAW_RC, &mSetRawRC, sizeof(mSetRawRC)))
+    {
+        return true;
+    }
+
+    return false;
 }
 
 void autoPilot()
@@ -483,10 +469,12 @@ void autoPilot()
     setYaw(current_yaw);
     setRoll(current_roll);
 
-    updateGpsReading(); 
+    updateGpsReading(); //update gps location
     updateAttitude(); //update yaw,pitch,roll vector
-    updateDroneAlt();
+    updateDroneAlt(); //update altitude from pressure sensor
     updateIMU(); //accel,gyro
+
+
 
 
     if (gpsFix) //when we have a gps fix
@@ -596,15 +584,14 @@ void flightMission()
 
     LatLng current_dest;
 
-    float heading = filter_yaw->update((float)getHeading());
-    //float heading = 0.0;
+    float heading = filter_yaw->update((float)getHeading()); //run current heading through low pass fliter
     
 
-//    if(!pos_hold) //if not is position hold mode
-//        current_dest = waypoints[way_point_counter]; //get the current destination
-//    else
-//        current_dest = startPos;
-    current_dest = startPos;
+   if(!pos_hold) //if not is position hold mode
+       current_dest = waypoints[way_point_counter]; //get the current destination
+   else
+       current_dest = startPos;
+    
 
 //    Serial.print(current_dest.lat, 5);
 //    Serial.print(F(","));
@@ -644,33 +631,36 @@ void flightMission()
 //
 //
 //   // //Kalman Stuff
-   float dt = last_update - millis()/1000.0;
+    float dt = last_update - millis()/1000.0;
 
-   float pitch_vel = (last_pitch_error - pitch_error)/dt;
-   float roll_vel = (last_pitch_error - pitch_error)/dt;
+    float pitch_vel = (last_pitch_error - pitch_error)/dt;
+    float roll_vel = (last_pitch_error - pitch_error)/dt;
 
-   last_update = millis()/1000.0;
+    last_update = millis()/1000.0;
 
-   
+
     roll_error = round(roll_error * 100.0) / 100.0;
     pitch_error = round(pitch_error * 100.0) / 100.0;
 
     state_y_kalman_filter.Predict(-drone_imu.acc[0],dt);
-   // state_x_kalman_filter.Predict(drone_imu.acc[1],dt);
-    
+    state_x_kalman_filter.Predict(drone_imu.acc[1],dt);
+
     state_y_kalman_filter.Update(pitch_error,0.0,0.0,0.0);
-   // state_x_kalman_filter.Update(roll_error,0.0,0.0,0.0);
+    state_x_kalman_filter.Update(roll_error,0.0,0.0,0.0);
 
     pitch_error = state_y_kalman_filter.getPosition();
-    //roll_error = state_x_kalman_filter.getPosition();
+    roll_error = state_x_kalman_filter.getPosition();
    
    
    // Serial.print("dt ");
    // Serial.print(dt);
-//    Serial.print("Predicted Pitch ");
-//    Serial.print(pitch_error);
-//    Serial.print("Predicted Roll ");
-//    Serial.print(roll_error);
+    if(debug_mode){
+      Serial.print("Predicted Pitch ");
+      Serial.print(pitch_error);
+      Serial.print("Predicted Roll ");
+      Serial.print(roll_error);
+    }
+    
 
     
     float heading_rads = degrees_to_radians(heading);
@@ -783,11 +773,11 @@ void setUpFilters()
 
 void populateWayPoints()
 {
-    current_location.lat = 18.00445;
-    current_location.lng = -76.74820;
+//    current_location.lat = 18.00445;
+//    current_location.lng = -76.74820;
 
-    startPos.lat = 18.00450;
-    startPos.lng = -76.74820;
+//    startPos.lat = 18.00450;
+//    startPos.lng = -76.74820;
 ////    
     LatLng dest;
 //    
@@ -1084,8 +1074,8 @@ void updateGpsReading()
     while (gpsSerial.available()) 
     {
         char c = gpsSerial.read();
-        if(debug_mode)
-            Serial.print(c);
+//        if(debug_mode)
+//            Serial.print(c);
 
         //Serial.print(gps.satellites());
         if (gps.encode(c)) //if we got a fix

@@ -9,7 +9,7 @@ class Matrix
 	private:
 		int n_rows;
 		int n_cols;
-		float * matrix;
+		float matrix[10];
 	public:
 		void init(int n_rows, int n_cols);
 

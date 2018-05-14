@@ -7,9 +7,9 @@ void Matrix::init(int nrows, int ncols)
 {
 	this->n_rows = nrows;
 	this->n_cols = ncols;
-	float m[this->n_rows * this->n_cols];
+	//float m[this->n_rows * this->n_cols];
 	//this->matrix = (float *) calloc(this->n_rows * this->n_cols,sizeof(float));
-	this->matrix = m;
+	//this->matrix = m;
 }
 
 
