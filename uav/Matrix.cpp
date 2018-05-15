@@ -114,7 +114,7 @@ Matrix Matrix::Multiply(Matrix m2)
 				
 			}
 			m3.Put(i,j,sum);
-            sum = 0;
+			sum = 0;
 		}
 	}
 	return m3;

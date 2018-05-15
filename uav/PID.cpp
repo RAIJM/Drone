@@ -39,7 +39,7 @@ float PID::updatePID(float error)
 	
 	float output = p_value + d_value + i_value;
 
-	return output; //
+	return output;
 }
 
 void PID::set_ki(float ki)
@@ -64,12 +64,11 @@ void PID::set_dt(float dt)
 
 float PID::get_dt()
 {
-    return this->dt;
+	return this->dt;
 }
 
 void PID::reset_pid()
 {
-	this->integral = 0;
-	
+	this->integral = 0;	
 }
 

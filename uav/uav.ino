@@ -10,10 +10,7 @@
 #include "MSP.h"
 #include "KalmanFilter.h"
 #include "MS5611.h"
-//#include "Matrix.h"
 #include "MemoryFree.h"
-
-
 
 #define model 20150
 #define RC_CHANNEL_MIN 990
@@ -31,16 +28,10 @@
 #define SBUS_STATE_SIGNALLOSS 0x04
 #define SBUS_UPDATE_RATE 4 //ms
 
-
-
-
 #define gpsSerial Serial3
 #define rcSerial Serial1
 #define mspSerial Serial2
 #define bluetoothSerial Serial
-
-
-
 
 byte last_channel_1;
 byte last_channel_2;
@@ -48,12 +39,6 @@ byte last_channel_3;
 byte last_channel_4;
 byte last_channel_5;
 byte last_channel_6;
-
-
-#define HEIGHT 300 //height above ground in cm
-
-//#define gpsSerial Serial1
-
 
 
 unsigned long timer_1;
@@ -75,6 +60,7 @@ bool pos_hold = false;
 bool control_heading = false;
 bool gps_wait = false;
 bool useKalman = false;
+bool debug_mode = false;
 
 
 //Throttle,Pitch,Yaw,Roll set autonomously
@@ -82,68 +68,28 @@ int current_throttle=1000;
 int current_pitch=1500;
 int current_roll=1500;
 int current_yaw=1500;
-
-    
-int next_state_timer=0;
-
 int time_of_last_execution;
-
-
 //Reciever channels
-
 int throttle_chan;
 int yaw_chan;
 int roll_chan;
 int pitch_chan;
 int aux1_chan;
 int aux2_chan;
-
- 
-//PID constants
-
-float throttle_kp = 0.8;
-float throttle_kd = 1.0;
-float throttle_ki = 0.2;
-float throttle_bandwidth = 50;
-
-float yaw_kp = 1.0;
-float yaw_kd = 0.0;
-float yaw_ki = 0.0;
-float yaw_bandwidth = 50;
-
-float roll_kp = 0.06;
-float roll_kd = 0.00;
-float roll_ki = 0.00;
-float roll_bandwidth = 50;
-
-float pitch_kp = 0.06;
-float pitch_kd = 0.00;
-float pitch_ki = 0.00;
-float pitch_bandwidth = 50;
-
-
-
-float g = 9.8;
-float vehicle_weight = 0.84;
-
 int u0 = 1000; // Zero throttle command
 int uh = 1700; // Hover throttle command
-float kt = vehicle_weight * g / (uh-u0);
-float desired_height = 3.0; //in meters
-
-float time_of_last_throttle_pid_update=0;
-
-
-
-
-SharpIR SharpIR(A0, model); //ir sensor
+int way_point_counter = 0; //current waypoint
+int num_waypoints = 1;
+int trigPinFront = 4;
+int echoPinFront = 5;
+int trigPinRear = 2;
+int echoPinRear = 3;
 
 
+SharpIR SharpIR(A0, model); //ir sensor'
 
 // The TinyGPS++ object
 TinyGPSPlus gps;
-
-
 
 PID * throttlePID; //pid controller for throttle
 PID * yawPID; //pid controller for yaw
@@ -151,29 +97,53 @@ PID * rollPID; //pid controller for roll
 PID * pitchPID; //pid controller for pitch
 PID * landPID;
 
-int way_point_counter = 0; //current waypoint
-int num_waypoints = 1;
-
 LatLng waypoints[4];
 LatLng current_location; //curent gps location
 LatLng startPos;
-
-
 
 MSP msp;
 msp_attitude_t drone_attitude; //attitude vector for drone (pitch,yaw,roll)
 msp_altitude_t drone_altitude; //altitude from barometer
 msp_raw_imu_t drone_imu; //Raw imu values from drone (accx,accy,accz,gyrox,gyroy,gyroz)
 
+//PID constants
+
+float throttle_kp = 0.8;
+float throttle_kd = 1.0;
+float throttle_ki = 0.2;
+float throttle_bandwidth = 50;
+float yaw_kp = 1.0;
+float yaw_kd = 0.0;
+float yaw_ki = 0.0;
+float yaw_bandwidth = 50;
+float roll_kp = 2.61;
+float roll_kd = 3.41;
+float roll_ki = 0;
+float roll_bandwidth = 50;
+float pitch_kp = 2.61;
+float pitch_kd = 3.41;
+float pitch_ki = 0;
+float pitch_bandwidth = 50;
+float g = 9.8;
+float vehicle_weight = 0.84;
 float drone_heading;
-
-
 float start_altitude;
-
 float accx_stddev = 0.265622958; //standard deviation for accelerometer in x axis
 float accy_stddev = 0.357508741; //standard deviation for accelerometer in y axis
-
 float pos_stddev = 2.0; //standard deviation for gps
+float start_alt;
+float last_pitch_error = 0.0;
+float last_roll_error = 0.0;
+float last_update = millis(); //timer for kalman filter update
+float check_failsafe = true;
+float check_timer;
+float time_to_send; //timer for bluetooth telemetry transmission
+float gps_wait_time;
+double referencePressure; //pressure on ground
+float kt = vehicle_weight * g / (uh-u0);
+float desired_height = 3.0; //in meters
+float time_of_last_throttle_pid_update=0;
+float time_to_fly; //timer for starting navigation mission
 
 
 low_pass* filter_yaw; //low pass filter for yaw
@@ -186,41 +156,23 @@ low_pass * filter_distance_rear;
 KalmanFilter state_x_kalman_filter(0.0f, 0.0f, pos_stddev, accx_stddev); //kalman filter for x-axis(roll)
 KalmanFilter state_y_kalman_filter(0.0f, 0.0f, pos_stddev , accy_stddev); //kalman filter for y-axis(pitch)
 
-
-
-float time_to_fly; //timer for starting navigation mission
-
 HMC5883L_Simple Compass; //magnometer used for heading
-
-
 MS5611 ms5611; //pressure sensor for altitude
-double referencePressure; //pressure on ground
-
-
-
-
-
-
-float last_pitch_error = 0.0;
-float last_roll_error = 0.0;
-
-float last_update = millis(); //timer for kalman filter update
-
-
-float check_failsafe = true;
-float check_timer;
-
-float time_to_send; //timer for bluetooth telemetry transmission
-float gps_wait_time;
 
 uint8_t sbusPacket[SBUS_PACKET_LENGTH];
 int rcChannels[SBUS_CHANNEL_NUMBER];
 uint32_t sbusTime = 0;
 
+//ultrasonic pwm pins
+uint8_t drone_roll_pid[] = {};
+uint8_t drone_pitch_pid[] = {};
+msp_set_raw_rc_t  mSetRawRC;
+
 
 void mainControl();
 void autoPilot();
 void flightMission();
+void stabilizeHeight();
 void setUpPIDs();
 void setUpFilters();
 void populateWayPoints();
@@ -230,42 +182,14 @@ void checkSettings();
 void arm();
 void disarm();
 void failSafe();
-float degToRad(float deg);
-int getHeading();
-float calcDistanceAndBearing(float,float,float,float,float*,float*);
-void  printRecieverValues();
+void printRecieverValues();
 void sendBluetoothData();
 void getBluetoothData();
-float getUltrasonicDistance(int trig_pin, int echo_pin);
-void stabilizeHeight();
-float getAltitude();
-float getSonarDistance();
-int getIRDistance();
-float getPressureSensorDistance();
-float toFloat(double number, int digits,char * str);
-bool updateAttitude();
 void updateGpsReading();
-bool updateIMU();
-bool updateDroneAlt();
 void resetPIDs();
 void updatePIDValues(String inData);
 void calculateStandardDeviation();
-String getValue(String data, char separator, int index);
-void sbusPreparePacket(uint8_t packet[], int channels[], bool isSignalLoss, bool isFailsafe);
-void sendCmd();
-void setUpUltrasonicSensors();
-float getDistanceFront();
-float getDistanceRear();
-void printAttitude();
-
-void initRC();
-bool sendMSPRCCmd();
-
 void setUpGps();
-
-
-
-
 void setPitch(int value);
 void setYaw(int value);
 void setRoll(int value);
@@ -273,37 +197,32 @@ void setThrottle(int value);
 void setAux1(int value);
 void setAux2(int value);
 
-float start_alt;
 
 
-//ultrasonic pwm pins
-int trigPinFront = 4;
-int echoPinFront = 5;
-int trigPinRear = 2;
-int echoPinRear = 3;
+float calcDistanceAndBearing(float,float,float,float,float*,float*);
+float getUltrasonicDistance(int trig_pin, int echo_pin);
+float getAltitude();
+float getSonarDistance();
+float getPressureSensorDistance();
+float toFloat(double number, int digits,char * str);
+float getDistanceFront();
+float getDistanceRear();
 
-uint8_t drone_roll_pid[] = {};
-uint8_t drone_pitch_pid[] = {};
-
-msp_set_raw_rc_t  mSetRawRC;
-
-bool debug_mode = false;
+int getHeading();
+int getIRDistance();
 //debug configurations [height navigation attitude imu gps receiver ]
 int debug_config[] = {0, 0, 0, 0, 0, 0}
 
+bool updateAttitude();
+bool updateIMU();
+bool updateDroneAlt();
 
-
-
-
-
+String getValue(String data, char separator, int index);
 
 
 void setup()
 {
 
-    
-
-    
     setUpPIDs(); //set up pid controllers for roll,pitch,throttle,yaw
     setUpFilters(); //set up low pass filters for pitch,roll,yaw
     populateWayPoints(); //set up waypoints
@@ -313,40 +232,25 @@ void setup()
     //bluetoothSerial.begin(38400);
     setUpCompass();
 
-
-    //setUpPressureSensor();
-
     setUpGPS();
 
-   // setUpUltrasonicSensors();
+    // setUpUltrasonicSensors();
 
     time_to_fly = millis();
     time_to_send = millis();
 
-
-
-
-    
-     
-//    Serial3.begin(38400); //bluetooth serial
-//    
+//    Serial3.begin(38400); //bluetooth serial  
     mspSerial.begin(115200); //serial for flight controller
     msp.begin(mspSerial);
 
-    
     updateDroneAlt();
     initRC();
     float avg_sum;
     for(int i=0;i<10;i++) 
     {
-      start_alt = drone_altitude.estimatedActualPosition;
-      updateDroneAlt();
+        start_alt = drone_altitude.estimatedActualPosition;
+        updateDroneAlt();
     }
-     //= avg_sum/10;
-    
-
-
-
     
     // put your setup code here, to run once:
 
@@ -359,15 +263,12 @@ void setup()
     PCMSK0 |= (1 << PCINT4);                                                  //Set PCINT4 (digital input 10)to trigger an interrupt on state change.
     PCMSK0 |= (1 << PCINT5);                                                  //Set PCINT5 (digital input 11)to trigger an interrupt on state change.
 
-
 }
 
 
 void loop()
 {
-    
-    mainControl();
-   
+    mainControl();   
 } 
 
 
@@ -375,9 +276,11 @@ void loop()
 void mainControl()
 {
     
-    //sendCmd(); //send control values to flight controller(pitch,roll,yaw,throttle)
+   
     if(!debug_mode)
-        sendMSPRCCmd();
+    {
+        sendMSPRCCmd();  //send control values to flight controller(pitch,roll,yaw,throttle)
+    }
     
     if(!armed) //if drone is not armed
     {
@@ -387,9 +290,9 @@ void mainControl()
             setThrottle(885); //throttle needs to be at this value for drone to be armed
             arm(); //arm the drone
         }
-    
-    }else{
-        
+
+    } else {
+
         if(manual)  //if drone is in the manual
         {
            //set throttle,pitch,yaw,roll from reciever
@@ -398,30 +301,28 @@ void mainControl()
             setRoll(roll_chan);
             setPitch(pitch_chan);  
 
-        }else{ //if drone is in automatic
-        
-            autoPilot();
-            
+        } else { //if drone is in automatic
+            autoPilot();            
         }
 
     }
 
     if(armed && aux2_chan <= 1200)
     {
-    
         disarm(); //disarm if aux2 is set to 1000
     }
 
     if(aux1_chan<=1200) //used to set to manual control
     {
         manual = true;
-    }else if(aux1_chan>=1700){ 
+    } else if (aux1_chan>=1700)
+    {
         manual = false;
     }
 
     if(debug_mode & config_mode[5]==1)
     {
-
+        printRecieverValues();
     }
 
     // if(millis() - time_to_send > 500)
@@ -439,25 +340,25 @@ void sendCmd()
 {
     uint32_t currentMillis = millis();
 
-    if (currentMillis > sbusTime) {
+    if (currentMillis > sbusTime) 
+    {
         sbusPreparePacket(sbusPacket, rcChannels, false, false);
         rcSerial.write(sbusPacket, SBUS_PACKET_LENGTH);
-
+        
         sbusTime = currentMillis + SBUS_UPDATE_RATE;
     }
 }
 
 void initRC()
 {
-  msp_rc_t rc;
-  if (msp.request(MSP_RC, &rc, sizeof(rc))) {
-    
-    uint16_t roll     = rc.channelValue[0];
-    uint16_t pitch    = rc.channelValue[1];
-    uint16_t yaw      = rc.channelValue[2];
-    uint16_t throttle = rc.channelValue[3];
-    memcpy (&mSetRawRC, &rc, sizeof(rc) );
-  }
+    msp_rc_t rc;
+    if (msp.request(MSP_RC, &rc, sizeof(rc))) {
+        uint16_t roll     = rc.channelValue[0];
+        uint16_t pitch    = rc.channelValue[1];
+        uint16_t yaw      = rc.channelValue[2];
+        uint16_t throttle = rc.channelValue[3];
+        memcpy (&mSetRawRC, &rc, sizeof(rc) );
+    }
 }
 
 bool sendMSPRCCmd()
@@ -466,7 +367,6 @@ bool sendMSPRCCmd()
     {
         return true;
     }
-
     return false;
 }
 
@@ -482,12 +382,10 @@ void autoPilot()
     updateDroneAlt(); //update altitude from pressure sensor
     updateIMU(); //accel,gyro
 
-
-
-
     if (gpsFix) //when we have a gps fix
     {
-        if(!gps_wait) {
+        if(!gps_wait) 
+        {
             gps_wait_time = millis();
             gps_wait = true;
         }
@@ -497,15 +395,13 @@ void autoPilot()
             //update start position for 10 seconds to get a better lock
             startPos.lat = current_location.lat;
             startPos.lng = current_location.lng;
-        
 
-            if(millis() - gps_wait_time > 5000) {
+            if(millis() - gps_wait_time > 5000) 
+            {
                 ready_to_fly = true;
                 time_to_fly = millis();
             }
-
         }
-
     }
 
     if(ready_to_fly)
@@ -517,9 +413,8 @@ void autoPilot()
             {
                 if(gpsFix)
                 {
-                  flightMission(); //start navigation mission  
+                    flightMission(); //start navigation mission  
                 }
-                
             }
         }
 
@@ -527,7 +422,6 @@ void autoPilot()
         {
             at_height = true;
         }
-    
     }
 }
 
@@ -541,22 +435,18 @@ void landCraft()
     float desired_throttle = current_throttle + throttlePIDVal;
     current_throttle = (int)constrain(desired_throttle,1000,2000);
 
-    if(debug_mode){
-        Serial.print("Throttle: ");
-        Serial.print(current_throttle);
-        Serial.print("Distance: ");
-        Serial.println(distance);
-    }
-
+    // if(debug_mode){
+    //     Serial.print("Throttle: ");
+    //     Serial.print(current_throttle);
+    //     Serial.print("Distance: ");
+    //     Serial.println(distance);
+    // }
 
 }
 
 
 void stabilizeHeight()
 {
-
-  
-    
     float distance = filter_alt->update(getAltitude());
     float error = desired_height - distance;
     
@@ -565,8 +455,8 @@ void stabilizeHeight()
 
     //take into account weight of drone and angle offset in pitch and roll direction
     float desired_throttle = ((throttlePIDVal + g) * vehicle_weight)/
-                                     (cos(filter_pitch->update(degToRad(drone_attitude.pitch/10.0))) 
-                                    * cos(filter_roll->update(degToRad(drone_attitude.roll/10.0))));
+                                     (cos(filter_pitch->update(degrees_to_radians(drone_attitude.pitch/10.0))) 
+                                    * cos(filter_roll->update(degrees_to_radians(drone_attitude.roll/10.0))));
    
     desired_throttle = (desired_throttle/ kt) + u0;
     
@@ -579,59 +469,45 @@ void stabilizeHeight()
         Serial.print("Distance: ");
         Serial.println(distance);
     }
-
-
-
-    
 }
 
 
 void flightMission()
 {
 
-
     LatLng current_dest;
 
     float heading = filter_yaw->update((float)getHeading()); //run current heading through low pass fliter
-    
-
     if(!pos_hold)//if not is position hold mode
     {
         current_dest = waypoints[way_point_counter]; //get the current destination
-
     }else {
         current_dest = startPos;
     } 
       
 
     float bearing_x, distance_x; //horizontal distance
-    
     calcDistanceAndBearing(current_dest.lat,current_location.lng,current_dest.lat,current_dest.lng,&distance_x,&bearing_x);
     
     float roll_error; //difference in longitude
-    
     if(bearing_x < 180) //left or right
     {
         roll_error = distance_x;
-    }else{
+    } else {
         roll_error = -distance_x;
     }
     
-
     
     float bearing_y, distance_y; //vertical distance
-    
     calcDistanceAndBearing(current_location.lat,current_dest.lng,current_dest.lat,current_dest.lng,&distance_y,&bearing_y);
     
-    float pitch_error; //difference in latitude
-    
+    float pitch_error; //difference in latitude  
     if(bearing_y < 90) //top or bottom
     {
         pitch_error = distance_y;
-    }else{
+    } else {
         pitch_error = -distance_y;
     }
-
 
     //Kalman Stuff
     if(useKalman){
@@ -656,12 +532,10 @@ void flightMission()
     //convert heading to radians
     float heading_rads = degrees_to_radians(heading);
 
-
     //update pid controllers with new error
     float rollPIDVal = rollPID->updatePID(roll_error);  
     float pitchPIDVal = pitchPID->updatePID(pitch_error);
     float yawPIDVal  = yawPID->updatePID(0.0 - heading);
-
 
     //calculate pitch,roll and yaw
     float desired_roll = toPWM(radians_to_degrees((rollPIDVal * cos(heading_rads) - pitchPIDVal * sin(heading_rads)) * (1/g)));
@@ -673,27 +547,19 @@ void flightMission()
     current_pitch = constrain(desired_pitch,1000,2000);
     
     if(control_heading) //for yaw control
+    {
         current_yaw = constrain(desired_yaw,1000,2000);
-
+    }
 
     //calcuate distance to waypoint
     float actual_bearing, actual_distance;
     calcDistanceAndBearing(current_location.lat,current_location.lng,current_dest.lat,current_dest.lng,&actual_distance,&actual_bearing);
 
-
-//    if(actual_distance < 5) //if craft is within 5m radius of destination
-//    {
-//       
-//        way_point_counter++;
-//        if(way_point_counter == num_waypoints) //land the craft
-//        {
-//            mission_done = true;
-//            current_throttle = 1000;
-//            Serial.println("Im here");
-//            //landCraft();
-//        }
-//    }
-//
+    if(actual_distance < 5) //if craft is within 5m radius of destination
+    {
+        // TODO 
+    }
+    
     if(debug_mode && debug_conig[1]==1)
     {
         Serial.print("Throttle: ");
@@ -708,10 +574,8 @@ void flightMission()
         Serial.print(pitch_error);
         Serial.print("Predicted Roll ");
         Serial.print(roll_error);
-
     }
       
-
 }
 
 
@@ -765,7 +629,6 @@ void setUpFilters()
 
 void populateWayPoints()
 {
-   
     LatLng dest;
 
     dest.lat = 18.00439;
@@ -804,8 +667,9 @@ void setUpPressureSensor()
     float pressure_sum;
     for( int i=0;i<10;i++)
     {
-      pressure_sum += ms5611.readPressure();
+        pressure_sum += ms5611.readPressure();
     }
+    
     float pressure_avg = pressure_sum /10;
 
     //Get reference pressure for relative altitude
@@ -831,9 +695,7 @@ void setUpGPS()
 
 void setAux1(int val)
 {
-    
     mSetRawRC.channel[4] = val;
- 
 }
 
 void setAux2(int val)
@@ -881,19 +743,18 @@ void failSafe()
     {
         aux1_chan = 0;
         check_failsafe = false;
-        check_timer = millis();
+    check_timer = millis();
     } else {
-
+        
         if(millis() - check_timer > 1000)
         {
             if(aux1_chan <= 0)
             {
                 manual = true;
                 throttle_chan = 1000;
-            }else{
+            } else {
                 check_failsafe = true;
             }
-            
         }
     }
 }
@@ -918,9 +779,6 @@ bool updateAttitude()
             Serial.println(drone_attitude.yaw);
         }
     }
-
-
-   
 }
 
 
@@ -939,9 +797,7 @@ bool updateIMU()
             Serial.println(drone_imu.acc[2]);
         }
         return true;
-
     } else {
-
         return false;
     }
 }
@@ -956,36 +812,34 @@ bool updateDroneAlt()
     } else {
         return false;
     }
-  
 }
 
 void setAndGetPIDs()
 {
-   msp_pid_t pid;
-  if(msp.request(MSP_PID, &pid, sizeof(pid)))
-  {
-    Serial.print("Roll PiD's");
-    Serial.print(pid.roll[0]);
-    Serial.print(pid.roll[1]);
-    Serial.print(pid.roll[2]);
-    Serial.println();
+    msp_pid_t pid;
+    if(msp.request(MSP_PID, &pid, sizeof(pid)))
+    {
+        Serial.print("Roll PiD's");
+        Serial.print(pid.roll[0]);
+        Serial.print(pid.roll[1]);
+        Serial.print(pid.roll[2]);
+        Serial.println();
 
-     msp_set_pid_t pid_send;
-     memcpy ( &pid_send, &pid, sizeof(pid) );
-     pid_send.roll[0] = drone_roll_pid[0];
-     pid_send.roll[1] = drone_roll_pid[1];
-     pid_send.roll[2] = drone_roll_pid[2];
-     pid_send.pitch[0] = drone_pitch_pid[0];
-     pid_send.pitch[1] = drone_pitch_pid[1];
-     pid_send.pitch[2] = drone_pitch_pid[2];
+        msp_set_pid_t pid_send;
+        memcpy ( &pid_send, &pid, sizeof(pid) );
+        pid_send.roll[0] = drone_roll_pid[0];
+        pid_send.roll[1] = drone_roll_pid[1];
+        pid_send.roll[2] = drone_roll_pid[2];
+        pid_send.pitch[0] = drone_pitch_pid[0];
+        pid_send.pitch[1] = drone_pitch_pid[1];
+        pid_send.pitch[2] = drone_pitch_pid[2];
  
-     if(msp.command(MSP_SET_PID, &pid_send, sizeof(pid_send)))
-     {
-        Serial.print("it worked");
+        if(msp.command(MSP_SET_PID, &pid_send, sizeof(pid_send)))
+        {
+            Serial.print("it worked");
       
-     }
-    
-  }
+        }    
+    }
 }
 
 //gets the altitude from pressre sensor
@@ -1050,20 +904,18 @@ int getHeading()
     if(angle < 120)
     {
         //heading = 180 + angle;
-      heading = 360 - (120 - angle);
-    }else{
+        heading = 360 - (120 - angle);
+    } else {
         //angle = heading - 90;
         heading = angle - 120;
     }
-    
-    drone_heading = heading;
 
+    drone_heading = heading;
     return drone_heading;
 }
 
 void updateGpsReading()
 {
-    
     bool newdata = false;
     unsigned long start = millis();
     while (gpsSerial.available()) 
@@ -1086,8 +938,7 @@ void updateGpsReading()
 
     if(newdata)
     {
-        checkGpsInfo();
-       
+        checkGpsInfo();      
     }
 }
 
@@ -1096,12 +947,12 @@ void checkGpsInfo()
     if (gps.location.isValid())
     {
         gpsFix = true;
-        if(debug_mode & debug_mode[4]==1){
+        if(debug_mode & debug_mode[4]==1)
+        {
             Serial.print(gps.location.lat(), 6);
             Serial.print(F(","));
             Serial.print(gps.location.lng(), 6);
         }
-
 
         char str_lat[13];
         char str_lon[13];
@@ -1136,7 +987,9 @@ float toFloat(double number, int digits,char * str)
     // Round correctly so that print(1.999, 2) prints as "2.00"
     double rounding = 0.5;
     for (uint8_t i=0; i<digits; ++i)
+    {
         rounding /= 10.0;
+    }
   
     number += rounding;
 
@@ -1154,10 +1007,10 @@ float toFloat(double number, int digits,char * str)
         i+=1;
         char_count+=1;
     }
-   // Serial.print(int_part);
 
     // Print the decimal point, but only if there are digits beyond
-    if (digits > 0){
+    if (digits > 0)
+    {
       //  Serial3.print(".");
         str[char_count] = '.';
         char_count+=1;
@@ -1179,19 +1032,6 @@ float toFloat(double number, int digits,char * str)
     float temp = atof(str);
     return temp;
 }
-
-void printAttitude()
-{
-    updateAttitude();
-    Serial.print("Roll: ");
-    Serial.print( drone_attitude.roll);
-    Serial.print("Yaw: ");
-    Serial.print(drone_attitude.yaw);
-    Serial.print("Pitch: ");
-    Serial.print(drone_attitude.pitch);
-}
-
-
 
 void sendBluetoothData()
 {
@@ -1304,25 +1144,26 @@ static void updatePIDValues(String inData)
     pitch_kp = str_pitch_kp.toFloat();
     pitch_kd = str_pitch_kd.toFloat();
     pitch_ki = str_pitch_ki.toFloat();
-   
-    
+ 
 }
 
 String getValue(String data, char separator, int index)
 {
-  int found = 0;
-  int strIndex[] = {0, -1};
-  int maxIndex = data.length()-1;
+    int found = 0;
+    int strIndex[] = {0, -1};
+    int maxIndex = data.length()-1;
 
-  for(int i=0; i<=maxIndex && found<=index; i++){
-    if(data.charAt(i)==separator || i==maxIndex){
-        found++;
-        strIndex[0] = strIndex[1]+1;
-        strIndex[1] = (i == maxIndex) ? i+1 : i;
+    for(int i=0; i<=maxIndex && found<=index; i++)
+    {
+        if(data.charAt(i)==separator || i==maxIndex)
+        {
+            found++;
+            strIndex[0] = strIndex[1]+1;
+            strIndex[1] = (i == maxIndex) ? i+1 : i;
+        }
     }
-  }
 
-  return found>index ? data.substring(strIndex[0], strIndex[1]) : "";
+    return found>index ? data.substring(strIndex[0], strIndex[1]) : "";
 }
 
 
@@ -1384,10 +1225,10 @@ float calcDistanceAndBearing(float lat1, float lon1, float lat2, float lon2,floa
     float R = 6371e3;
     
     //Haversine Distance
-    float lat1_rad = degToRad(lat1);
-    float lat2_rad = degToRad(lat2);
-    float delta_lat_rad = degToRad(lat2 - lat1);
-    float delta_lon_rad = degToRad(lon2 - lon1);
+    float lat1_rad = degrees_to_radians(lat1);
+    float lat2_rad = degrees_to_radians(lat2);
+    float delta_lat_rad = degrees_to_radians(lat2 - lat1);
+    float delta_lon_rad = degrees_to_radians(lon2 - lon1);
     
     float a = sin(delta_lat_rad / 2) * sin(delta_lat_rad / 2)
         + cos(lat1_rad) * cos(lat2_rad)
@@ -1405,10 +1246,12 @@ float calcDistanceAndBearing(float lat1, float lon1, float lat2, float lon2,floa
 
     if (cos(c1) * sin(d - b) == 0){
         if (c1 > a1)
+        {
             *bearing =  0;
-        else
+        } else {
             *bearing =  180;
-    }else{
+        }
+    } else {
         float angle = atan((cos(c1) * sin(d - b)) / (sin(c1) * cos(a1) - sin(a1) * cos(c1) * cos(d - b)));
         *bearing = (int)(angle * 180 / M_PI + 360) % 360;
 
@@ -1416,11 +1259,6 @@ float calcDistanceAndBearing(float lat1, float lon1, float lat2, float lon2,floa
 
 }
 
-//converts degrees to radians
-float degToRad(float deg)
-{
-    return (deg * M_PI) / 180;
-}
 
 void printRecieverValues()
 {
@@ -1442,24 +1280,8 @@ void printRecieverValues()
     Serial.print("Aux2:");
     Serial.println(aux2_chan);
 
-  
 }
 
-void testIMU()
-{
-    updateIMU();
-    
-}
-
-
-
-void testAltitude()
-{
-    updateDroneAlt();
-
-    Serial.print("Altitude: ");
-    Serial.print(getAltitude());
-}
 
 
 
@@ -1514,76 +1336,94 @@ void sbusPreparePacket(uint8_t packet[], int channels[], bool isSignalLoss, bool
 
 
 
-ISR(PCINT0_vect){
-  current_time = micros();
-  //Channel 1=========================================
-  if(PINB & B00000001){                                                     //Is input 8 high?
-    if(last_channel_1 == 0){                                                //Input 8 changed from 0 to 1.
-      last_channel_1 = 1;                                                   //Remember current input state.
-      timer_1 = current_time;                                               //Set timer_1 to current_time.
+ISR(PCINT0_vect)
+{
+    current_time = micros();
+    //Channel 1=========================================
+    if(PINB & B00000001)
+    {                                                     //Is input 8 high?
+        if(last_channel_1 == 0)
+        {                                                //Input 8 changed from 0 to 1.
+            last_channel_1 = 1;                                                   //Remember current input state.
+            timer_1 = current_time;                                               //Set timer_1 to current_time.
+        }
+        
+    } else if (last_channel_1 == 1) {                                             //Input 8 is not high and changed from 1 to 0.
+        last_channel_1 = 0;                                                     //Remember current input state.
+        roll_chan = current_time - timer_1;                             //Channel 1 is current_time - timer_1.
     }
-  }
-  else if(last_channel_1 == 1){                                             //Input 8 is not high and changed from 1 to 0.
-    last_channel_1 = 0;                                                     //Remember current input state.
-    roll_chan = current_time - timer_1;                             //Channel 1 is current_time - timer_1.
-  }
-  //Channel 2=========================================
-  if(PINB & B00000010 ){                                                    //Is input 9 high?
-    if(last_channel_2 == 0){                                                //Input 9 changed from 0 to 1.
-      last_channel_2 = 1;                                                   //Remember current input state.
-      timer_2 = current_time;                                               //Set timer_2 to current_time.
-    }
-  }
-  else if(last_channel_2 == 1){                                             //Input 9 is not high and changed from 1 to 0.
-    last_channel_2 = 0;                                                     //Remember current input state.
-    throttle_chan = current_time - timer_2;                             //Channel 2 is current_time - timer_2.
-  }
-  //Channel 3=========================================
-  if(PINB & B00000100 ){                                                    //Is input 10 high?
-    if(last_channel_3 == 0){                                                //Input 10 changed from 0 to 1.
-      last_channel_3 = 1;                                                   //Remember current input state.
-      timer_3 = current_time;                                               //Set timer_3 to current_time.
-    }
-  }
-  else if(last_channel_3 == 1){                                             //Input 10 is not high and changed from 1 to 0.
-    last_channel_3 = 0;                                                     //Remember current input state.
-    pitch_chan = current_time - timer_3;                             //Channel 3 is current_time - timer_3.
+  
 
-  }
-  //Channel 4=========================================
-  if(PINB & B00001000 ){                                                    //Is input 11 high?
-    if(last_channel_4 == 0){                                                //Input 11 changed from 0 to 1.
-      last_channel_4 = 1;                                                   //Remember current input state.
-      timer_4 = current_time;                                               //Set timer_4 to current_time.
-    }
-  }
-  else if(last_channel_4 == 1){                                             //Input 11 is not high and changed from 1 to 0.
-    last_channel_4 = 0;                                                     //Remember current input state.
-    yaw_chan = current_time - timer_4;                             //Channel 4 is current_time - timer_4.
-  }
+    //Channel 2=========================================
+    if(PINB & B00000010 )
+    {                                                    //Is input 9 high?
+        if(last_channel_2 == 0)
+        {                                                //Input 9 changed from 0 to 1.
+            last_channel_2 = 1;                                                   //Remember current input state.
+            timer_2 = current_time;                                               //Set timer_2 to current_time.
+        }
 
-   //Channel 5=========================================
-  if(PINB & B00010000 ){                                                    //Is input 11 high?
-    if(last_channel_5 == 0){                                                //Input 11 changed from 0 to 1.
-      last_channel_5 = 1;                                                   //Remember current input state.
-      timer_5 = current_time;                                               //Set timer_4 to current_time.
+    } else if (last_channel_2 == 1) {                                             //Input 9 is not high and changed from 1 to 0.
+        last_channel_2 = 0;                                                     //Remember current input state.
+        throttle_chan = current_time - timer_2;                             //Channel 2 is current_time - timer_2.
     }
-  }
-  else if(last_channel_5 == 1){                                             //Input 11 is not high and changed from 1 to 0.
-    last_channel_5 = 0;                                                     //Remember current input state.
-    aux1_chan = current_time - timer_5;                             //Channel 4 is current_time - timer_4.
-  }
+  
+    
+    //Channel 3=========================================
+    if(PINB & B00000100 )
+    {                                                    //Is input 10 high?
+        if(last_channel_3 == 0)
+        {                                                //Input 10 changed from 0 to 1.
+            last_channel_3 = 1;                                                   //Remember current input state.
+            timer_3 = current_time;                                               //Set timer_3 to current_time.
+        }
 
-   //Channel 6=========================================
-  if(PINB & B00100000 ){                                                    //Is input 11 high?
-    if(last_channel_6 == 0){                                                //Input 11 changed from 0 to 1.
-      last_channel_6 = 1;                                                   //Remember current input state.
-      timer_6 = current_time;                                               //Set timer_4 to current_time.
+    } else if (last_channel_3 == 1) {                                             //Input 10 is not high and changed from 1 to 0.
+        last_channel_3 = 0;                                                     //Remember current input state.
+        pitch_chan = current_time - timer_3;                             //Channel 3 is current_time - timer_3.
     }
-  }
-  else if(last_channel_6 == 1){                                             //Input 11 is not high and changed from 1 to 0.
-    last_channel_6 = 0;                                                     //Remember current input state.
-    aux2_chan = current_time - timer_6;                             //Channel 4 is current_time - timer_4.
-  }
+  
+
+    //Channel 4=========================================
+    if(PINB & B00001000 )
+    {                                                    //Is input 11 high?
+        if(last_channel_4 == 0)
+        {                                                //Input 11 changed from 0 to 1.
+            last_channel_4 = 1;                                                   //Remember current input state.
+            timer_4 = current_time;                                               //Set timer_4 to current_time.
+        }
+
+    } else if (last_channel_4 == 1) {                                             //Input 11 is not high and changed from 1 to 0.
+        last_channel_4 = 0;                                                     //Remember current input state.
+        yaw_chan = current_time - timer_4;                             //Channel 4 is current_time - timer_4.
+    }
+
+    //Channel 5=========================================
+    if(PINB & B00010000 )
+    {                                                    //Is input 11 high?
+        if(last_channel_5 == 0)
+        {                                                //Input 11 changed from 0 to 1.
+            last_channel_5 = 1;                                                   //Remember current input state.
+            timer_5 = current_time;                                               //Set timer_4 to current_time.
+        }
+
+    } else if(last_channel_5 == 1) {                                             //Input 11 is not high and changed from 1 to 0.
+        last_channel_5 = 0;                                                     //Remember current input state.
+        aux1_chan = current_time - timer_5;                             //Channel 4 is current_time - timer_4.
+    }
+
+    //Channel 6=========================================
+    if(PINB & B00100000 )
+    {                                                    //Is input 11 high?
+        if(last_channel_6 == 0)
+        {                                                //Input 11 changed from 0 to 1.
+            last_channel_6 = 1;                                                   //Remember current input state.
+            timer_6 = current_time;                                               //Set timer_4 to current_time.
+        }
+
+    } else if (last_channel_6 == 1) {                                             //Input 11 is not high and changed from 1 to 0.
+        last_channel_6 = 0;                                                     //Remember current input state.
+        aux2_chan = current_time - timer_6;                             //Channel 4 is current_time - timer_4.
+    }
 }
 
