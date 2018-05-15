@@ -113,7 +113,7 @@ void KalmanFilter::Update(float pos, float velocity, float pos_error, float velo
 	Matrix hpht = this->H.Multiply(p_ht);
 
 	Matrix S = hpht.Add(this->R);  
-    S.Inverse();
+	S.Inverse();
     
 	Matrix K = p_ht.Multiply(S);
 	Matrix K_y = K.Multiply(y);

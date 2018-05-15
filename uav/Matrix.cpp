@@ -1,6 +1,4 @@
 #include "Matrix.h"
-//#include <stdio.h>
-
 
 
 void Matrix::init(int nrows, int ncols)
@@ -9,8 +7,6 @@ void Matrix::init(int nrows, int ncols)
 	this->n_cols = ncols;
 
 }
-
-
 
 
 //Puts element at row and column
@@ -30,8 +26,12 @@ void Matrix::setMatrix(Matrix m2)
 {
 	int i,j;
 	for(i =0; i < m2.n_rows; i++)
+	{
 		for(j=0; j < m2.n_cols; j++)
+		{
 			this->Put(i,j,m2.Get(i,j));
+		}
+	}
 }
 
 
@@ -46,11 +46,17 @@ Matrix Matrix::Identity(int n_rows,int n_cols)
 	ident.init(n_rows, n_cols);
 	int i,j;
 	for(i=0; i< n_rows; i++)
+	{
 		for(j=0; j < n_cols; j++)
+		{
 			if(i == j)
+			{
 				ident.Put(i,j,1.0f);
-			else
+			} else {
 				ident.Put(i,j,0.0f);
+			}
+		}
+	}
 	return ident;
 }
 
@@ -61,9 +67,14 @@ Matrix Matrix::Add(Matrix m2)
 	int i,j;
 	Matrix m3;
 	m3.init(this->n_rows,this->n_cols);
+	
 	for(i=0; i < this->n_rows; i++)
+	{
 		for(j=0; j < this->n_cols; j++)
+		{
 			m3.Put(i,j,this->Get(i,j) + m2.Get(i,j));
+		}
+	}
 	return m3;
 
 }
@@ -75,8 +86,12 @@ Matrix Matrix::Subtract(Matrix  m2)
 	Matrix m3;
 	m3.init(this->n_rows,this->n_cols);
 	for(i=0;i<this->n_rows; i++)
+	{
 		for(j=0; j < this->n_cols; j++)
+		{
 			m3.Put(i,j,this->Get(i,j) - m2.Get(i,j));
+		}
+	}
 	return m3;
 }
 
@@ -113,8 +128,12 @@ Matrix Matrix::Transpose()
 	Matrix mt;
 	mt.init(this->n_cols,this->n_rows);
 	for(i=0; i < this->n_rows; i++)
+	{
 		for(j=0; j < this->n_cols; j++)
+		{
 			mt.Put(j,i,this->Get(i,j));
+		}
+	}
 	return mt;
 }
 
@@ -129,8 +148,6 @@ void Matrix::printMatrix()
 			
 			Serial.print(this->Get(i,j),9);
 		}
-		
-
 	}
     Serial.println();
 		
