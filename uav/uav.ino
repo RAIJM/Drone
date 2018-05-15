@@ -74,6 +74,7 @@ bool ready_to_fly = false;
 bool pos_hold = false;
 bool control_heading = false;
 bool gps_wait = false;
+bool useKalman = false;
 
 
 //Throttle,Pitch,Yaw,Roll set autonomously
@@ -287,6 +288,8 @@ uint8_t drone_pitch_pid[] = {};
 msp_set_raw_rc_t  mSetRawRC;
 
 bool debug_mode = false;
+//debug configurations [height navigation attitude imu gps receiver ]
+int debug_config[] = {0, 0, 0, 0, 0, 0}
 
 
 
@@ -414,6 +417,11 @@ void mainControl()
         manual = true;
     }else if(aux1_chan>=1700){ 
         manual = false;
+    }
+
+    if(debug_mode & config_mode[5]==1)
+    {
+
     }
 
     // if(millis() - time_to_send > 500)
@@ -564,7 +572,7 @@ void stabilizeHeight()
     
     current_throttle = (int)constrain(desired_throttle,1000,2000); //limit throttle between 1000 and 2000
 
-    if(debug_mode) 
+    if(debug_mode && debug_conig[0]==1) 
     {
         Serial.print("Throttle: ");
         Serial.print(current_throttle);
@@ -587,16 +595,15 @@ void flightMission()
     float heading = filter_yaw->update((float)getHeading()); //run current heading through low pass fliter
     
 
-   if(!pos_hold) //if not is position hold mode
-       current_dest = waypoints[way_point_counter]; //get the current destination
-   else
-       current_dest = startPos;
-    
+    if(!pos_hold)//if not is position hold mode
+    {
+        current_dest = waypoints[way_point_counter]; //get the current destination
 
-//    Serial.print(current_dest.lat, 5);
-//    Serial.print(F(","));
-//    Serial.println(current_dest.lng, 5);
-    
+    }else {
+        current_dest = startPos;
+    } 
+      
+
     float bearing_x, distance_x; //horizontal distance
     
     calcDistanceAndBearing(current_dest.lat,current_location.lng,current_dest.lat,current_dest.lng,&distance_x,&bearing_x);
@@ -625,44 +632,28 @@ void flightMission()
         pitch_error = -distance_y;
     }
 
-//   Serial.print("Previous Pitch");
-//   Serial.print(F(","));
-//   Serial.print(pitch_error,6);
-//
-//
-//   // //Kalman Stuff
-    float dt = last_update - millis()/1000.0;
 
-    float pitch_vel = (last_pitch_error - pitch_error)/dt;
-    float roll_vel = (last_pitch_error - pitch_error)/dt;
+    //Kalman Stuff
+    if(useKalman){
+        float dt = last_update - millis()/1000.0;
 
-    last_update = millis()/1000.0;
+        float pitch_vel = (last_pitch_error - pitch_error)/dt;
+        float roll_vel = (last_pitch_error - pitch_error)/dt;
 
+        last_update = millis()/1000.0;
 
-    roll_error = round(roll_error * 100.0) / 100.0;
-    pitch_error = round(pitch_error * 100.0) / 100.0;
+        state_y_kalman_filter.Predict(-drone_imu.acc[0],dt);
+        state_x_kalman_filter.Predict(drone_imu.acc[1],dt);
 
-    state_y_kalman_filter.Predict(-drone_imu.acc[0],dt);
-    state_x_kalman_filter.Predict(drone_imu.acc[1],dt);
+        state_y_kalman_filter.Update(pitch_error,0.0,0.0,0.0);
+        state_x_kalman_filter.Update(roll_error,0.0,0.0,0.0);
 
-    state_y_kalman_filter.Update(pitch_error,0.0,0.0,0.0);
-    state_x_kalman_filter.Update(roll_error,0.0,0.0,0.0);
-
-    pitch_error = state_y_kalman_filter.getPosition();
-    roll_error = state_x_kalman_filter.getPosition();
-   
-   
-   // Serial.print("dt ");
-   // Serial.print(dt);
-    if(debug_mode){
-      Serial.print("Predicted Pitch ");
-      Serial.print(pitch_error);
-      Serial.print("Predicted Roll ");
-      Serial.print(roll_error);
+        pitch_error = state_y_kalman_filter.getPosition();
+        roll_error = state_x_kalman_filter.getPosition();
     }
-    
+        
 
-    
+    //convert heading to radians
     float heading_rads = degrees_to_radians(heading);
 
 
@@ -703,7 +694,7 @@ void flightMission()
 //        }
 //    }
 //
-    if(debug_mode)
+    if(debug_mode && debug_conig[1]==1)
     {
         Serial.print("Throttle: ");
         Serial.print(current_throttle);
@@ -713,8 +704,11 @@ void flightMission()
         Serial.print(current_pitch);
         Serial.print("Yaw: ");
         Serial.print(current_yaw);
-        Serial.print("Distance: ");
-        Serial.println(actual_distance);
+        Serial.print("Predicted Pitch ");
+        Serial.print(pitch_error);
+        Serial.print("Predicted Roll ");
+        Serial.print(roll_error);
+
     }
       
 
@@ -734,28 +728,26 @@ void setUpPIDs()
 
 float getAltitude()
 {
-  
-  return getDroneAlt();
-  //return getPressureSensorDistance();
+    return getDroneAlt();
 }
 
 void setUpUltrasonicSensors()
 {
-  pinMode(trigPinFront, OUTPUT); // Sets the trigPin as an Output
-  pinMode(echoPinFront, INPUT); // Sets the echoPin as an Input
-  pinMode(trigPinRear, OUTPUT); // Sets the trigPin as an Output
-  pinMode(echoPinRear, INPUT); // Sets the echoPin as an Input
+    pinMode(trigPinFront, OUTPUT); // Sets the trigPin as an Output
+    pinMode(echoPinFront, INPUT); // Sets the echoPin as an Input
+    pinMode(trigPinRear, OUTPUT); // Sets the trigPin as an Output
+    pinMode(echoPinRear, INPUT); // Sets the echoPin as an Input
 }
 
 
 float getDistanceFront()
 {
-  return filter_distance_front->update(getUltrasonicDistance(trigPinFront,echoPinFront));
+    return filter_distance_front->update(getUltrasonicDistance(trigPinFront,echoPinFront));
 }
 
 float getDistanceRear()
 {
-  return filter_distance_rear->update(getUltrasonicDistance(trigPinRear,echoPinRear));
+    return filter_distance_rear->update(getUltrasonicDistance(trigPinRear,echoPinRear));
 }
 
 void setUpFilters()
@@ -773,17 +765,12 @@ void setUpFilters()
 
 void populateWayPoints()
 {
-//    current_location.lat = 18.00445;
-//    current_location.lng = -76.74820;
-
-//    startPos.lat = 18.00450;
-//    startPos.lng = -76.74820;
-////    
+   
     LatLng dest;
-//    
-//    
+
     dest.lat = 18.00439;
     dest.lng = -76.74813;
+    
     waypoints[0] = dest;
 }
 
@@ -833,60 +820,46 @@ void setUpPressureSensor()
 
 void setUpGPS()
 {
-  gpsSerial.begin(9600);
+    gpsSerial.begin(9600);
 
-  Serial.println(F("DeviceExample.ino"));
-  Serial.println(F("A simple demonstration of TinyGPS++ with an attached GPS module"));
-  Serial.print(F("Testing TinyGPS++ library v. ")); Serial.println(TinyGPSPlus::libraryVersion());
-  Serial.println(F("by Mikal Hart"));
-  Serial.println();
+    Serial.println(F("DeviceExample.ino"));
+    Serial.println(F("A simple demonstration of TinyGPS++ with an attached GPS module"));
+    Serial.print(F("Testing TinyGPS++ library v. ")); Serial.println(TinyGPSPlus::libraryVersion());
+    Serial.println(F("by Mikal Hart"));
+    Serial.println();
 }
 
 void setAux1(int val)
 {
-  //rcChannels[4] = val;
-  mSetRawRC.channel[4] = val;
+    
+    mSetRawRC.channel[4] = val;
  
 }
 
 void setAux2(int val)
 {
-  //rcChannels[5] = val;
-  mSetRawRC.channel[5] = val;
+    mSetRawRC.channel[5] = val;
 }
 
 void setThrottle(int val)
 {
-  //2
-  //0
-  //rcChannels[0] = val;
-  mSetRawRC.channel[2] = val;
+    mSetRawRC.channel[2] = val;
 }
 
 void setPitch(int val)
 {
-  //1
-  //2
-  //rcChannels[1]= val;
-  mSetRawRC.channel[1] = val;
+    mSetRawRC.channel[1] = val;
 }
 
 void setYaw(int val)
 {
-  //3
-  //rcChannels[2] = val;
-  mSetRawRC.channel[3] = val;
+    mSetRawRC.channel[3] = val;
 }
 
 void setRoll(int val)
 {
-  //0
-  //rcChannels[3] = val;
-  mSetRawRC.channel[0] = val;
+    mSetRawRC.channel[0] = val;
 }
-
-
-
 
 void arm()
 {
@@ -904,13 +877,13 @@ void disarm()
 void failSafe()
 {
 
-    if(check_failsafe){
+    if(check_failsafe)
+    {
         aux1_chan = 0;
         check_failsafe = false;
         check_timer = millis();
-    }
+    } else {
 
-    if(!check_failsafe){
         if(millis() - check_timer > 1000)
         {
             if(aux1_chan <= 0)
@@ -928,14 +901,25 @@ void failSafe()
 
 bool updateAttitude()
 {
-      msp_attitude_t att;
-      if (msp.request(MSP_ATTITUDE, &att, sizeof(att))) {
-        
+    msp_attitude_t att;
+    if (msp.request(MSP_ATTITUDE, &att, sizeof(att))) {
         int16_t roll = att.roll;
         int16_t pitch = att.pitch;
         int16_t yaw = att.yaw;
         drone_attitude = att;
-      }
+
+        if(debug_mode && debug_conig[2]===1)
+        {
+            Serial.print("Pitch: ");
+            Serial.print(drone_attitude.pitch);
+            Serial.print("Roll: ");
+            Serial.print(drone_attitude.roll);
+            Serial.print("Yaw: ");
+            Serial.println(drone_attitude.yaw);
+        }
+    }
+
+
    
 }
 
@@ -944,23 +928,34 @@ bool updateIMU()
 {
     msp_raw_imu_t imu;
     if (msp.request(MSP_RAW_IMU, &imu, sizeof(imu))) {
-        //drone_altitude.estimatedActualPosition = alt.estimatedActualPosition;
         drone_imu = imu;
+        if(debug_mode && debug_conig[3]==1)
+        {
+            Serial.print("AccX: ");
+            Serial.print(drone_imu.acc[0]);
+            Serial.print("AccY: ");
+            Serial.print(drone_imu.acc[1]);
+            Serial.print("AccZ: ");
+            Serial.println(drone_imu.acc[2]);
+        }
         return true;
-    }else{
+
+    } else {
+
         return false;
     }
 }
 
 bool updateDroneAlt()
 {
-  msp_altitude_t alt;
-  if (msp.request(MSP_ALTITUDE, &alt, sizeof(alt))) {
-    drone_altitude.estimatedActualPosition = alt.estimatedActualPosition;
-    return true;
-  }else{
+    msp_altitude_t alt;
+    if (msp.request(MSP_ALTITUDE, &alt, sizeof(alt))) 
+    {
+        drone_altitude.estimatedActualPosition = alt.estimatedActualPosition;
+        return true;
+    } else {
         return false;
-  }
+    }
   
 }
 
@@ -1077,24 +1072,20 @@ void updateGpsReading()
 //        if(debug_mode)
 //            Serial.print(c);
 
-        //Serial.print(gps.satellites());
         if (gps.encode(c)) //if we got a fix
         {
             newdata = true;
-            //checkGpsInfo();
             break;
         }
 
         if(millis() - start > 5) //timeout to prevent gps from stalling loop
         {
-            // Serial.print("Timeout");
             break;
         } 
     }
 
     if(newdata)
     {
-        //Serial.print("Hello");
         checkGpsInfo();
        
     }
@@ -1105,7 +1096,7 @@ void checkGpsInfo()
     if (gps.location.isValid())
     {
         gpsFix = true;
-        if(debug_mode){
+        if(debug_mode & debug_mode[4]==1){
             Serial.print(gps.location.lat(), 6);
             Serial.print(F(","));
             Serial.print(gps.location.lng(), 6);
@@ -1121,7 +1112,7 @@ void checkGpsInfo()
         current_location.lat = flat;
         current_location.lng = flon;
     
-    }else{
+    } else {
 
         gpsFix = false;
     }
@@ -1191,13 +1182,13 @@ float toFloat(double number, int digits,char * str)
 
 void printAttitude()
 {
-  updateAttitude();
-  Serial.print("Roll: ");
-  Serial.print( drone_attitude.roll);
-  Serial.print("Yaw: ");
-  Serial.print(drone_attitude.yaw);
-  Serial.print("Pitch: ");
-  Serial.print(drone_attitude.pitch);
+    updateAttitude();
+    Serial.print("Roll: ");
+    Serial.print( drone_attitude.roll);
+    Serial.print("Yaw: ");
+    Serial.print(drone_attitude.yaw);
+    Serial.print("Pitch: ");
+    Serial.print(drone_attitude.pitch);
 }
 
 
@@ -1433,54 +1424,41 @@ float degToRad(float deg)
 
 void printRecieverValues()
 {
-  Serial.print("Throttle:");
-  Serial.print(throttle_chan);
+    Serial.print("Throttle:");
+    Serial.print(throttle_chan);
 
-  Serial.print("Yaw:");
-  Serial.print(yaw_chan);
+    Serial.print("Yaw:");
+    Serial.print(yaw_chan);
 
-  Serial.print("Roll:");
-  Serial.print(roll_chan);
+    Serial.print("Roll:");
+    Serial.print(roll_chan);
 
-  Serial.print("Pitch:");
-  Serial.print(pitch_chan);
+    Serial.print("Pitch:");
+    Serial.print(pitch_chan);
 
-  Serial.print("Aux1:");
-  Serial.print(aux1_chan);
+    Serial.print("Aux1:");
+    Serial.print(aux1_chan);
 
-  Serial.print("Aux2:");
-  Serial.println(aux2_chan);
+    Serial.print("Aux2:");
+    Serial.println(aux2_chan);
 
   
 }
 
 void testIMU()
 {
-  updateIMU();
-  Serial.print("AccX: ");
-  Serial.print(drone_imu.acc[0]);
-  Serial.print("AccY: ");
-  Serial.print(drone_imu.acc[1]);
-  Serial.print("AccZ: ");
-  Serial.println(drone_imu.acc[2]);
+    updateIMU();
+    
 }
 
-void testAttitude()
-{
-  updateAttitude();
-  Serial.print("Pitch: ");
-  Serial.print(drone_attitude.pitch);
-  Serial.print("Roll: ");
-  Serial.print(drone_attitude.roll);
-  Serial.print("Yaw: ");
-  Serial.println(drone_attitude.yaw);
-}
+
 
 void testAltitude()
 {
-  updateDroneAlt();
-  Serial.print("Altitude: ");
-  Serial.print(getAltitude());
+    updateDroneAlt();
+
+    Serial.print("Altitude: ");
+    Serial.print(getAltitude());
 }
 
 
