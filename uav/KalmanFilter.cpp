@@ -66,29 +66,30 @@ float KalmanFilter::getVelocity()
 // P = APA^t + Q //covariance prediction(Predict how much error)
 void KalmanFilter::Predict(float accel, float dt)
 {
+	
 	this->update_control_matrix(dt);
 	this->update_state_transition_matrix(dt);
 
 	this->u.Put(0,0,accel); 
     
-    Matrix ax = this->A.Multiply(this->current_state);
+	Matrix ax = this->A.Multiply(this->current_state);
 
-    Matrix bu = this->B.Multiply(this->u);
+	Matrix bu = this->B.Multiply(this->u);
 
-    Matrix ax_bu = ax.Add(bu);
+	Matrix ax_bu = ax.Add(bu);
 
-    this->current_state.setMatrix(ax_bu);
+	this->current_state.setMatrix(ax_bu);
 
 
-    Matrix ap = this->A.Multiply(this->P);
+	Matrix ap = this->A.Multiply(this->P);
 
-    Matrix at = this->A.Transpose();
+	Matrix at = this->A.Transpose();
 
-    Matrix apt = ap.Multiply(at);
+	Matrix apt = ap.Multiply(at);
 
-    Matrix apt_q = apt.Add(this->Q);
+	Matrix apt_q = apt.Add(this->Q);
 
-    this->P.setMatrix(apt_q);
+	this->P.setMatrix(apt_q);
 
 }
 
