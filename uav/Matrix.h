@@ -18,7 +18,6 @@ class Matrix
 		Matrix Subtract(Matrix m2);
 		Matrix Transpose();
 		void setMatrix(Matrix m2);
-        void freeMemory();
 		void Put(int row,int col,float val);
 		float Get(int row, int col);
 		void Inverse();
