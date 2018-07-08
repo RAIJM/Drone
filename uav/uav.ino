@@ -10,7 +10,6 @@
 #include "MSP.h"
 #include "KalmanFilter.h"
 #include "MS5611.h"
-#include "MemoryFree.h"
 
 #define model 20150
 #define RC_CHANNEL_MIN 990
@@ -211,7 +210,7 @@ float getDistanceRear();
 int getHeading();
 int getIRDistance();
 // debug configurations [height navigation attitude imu gps receiver ]
-int debug_config[] = {0, 0, 0, 0, 0, 0}
+int debug_config[] = {0, 0, 0, 0, 0, 0};
 
 bool updateAttitude();
 bool updateIMU();
@@ -268,7 +267,11 @@ void setup()
 
 void loop()
 {
-    mainControl();   
+    mainControl();
+    
+    
+    
+   
 } 
 
 
@@ -320,7 +323,7 @@ void mainControl()
         manual = false;
     }
 
-    if(debug_mode & config_mode[5]==1)
+    if(debug_mode & debug_config[5]==1)
     {
         printRecieverValues();
     }
@@ -769,7 +772,7 @@ bool updateAttitude()
         int16_t yaw = att.yaw;
         drone_attitude = att;
 
-        if(debug_mode && debug_config[2]===1)
+        if(debug_mode && debug_config[2]==1)
         {
             Serial.print("Pitch: ");
             Serial.print(drone_attitude.pitch);
@@ -945,7 +948,7 @@ void checkGpsInfo()
     if (gps.location.isValid())
     {
         gpsFix = true;
-        if(debug_mode & debug_mode[4]==1)
+        if(debug_mode && debug_config[4]==1)
         {
             Serial.print(gps.location.lat(), 6);
             Serial.print(F(","));
